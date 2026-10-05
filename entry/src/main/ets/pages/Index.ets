@@ -1,23 +1,162 @@
+import { camera } from '@kit.CameraKit';
+import { image } from '@kit.ImageKit';
+import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { requestCameraPermission } from '../entryability/PermissionHelper';
+
 @Entry
 @Component
 struct Index {
-  @State message: string = 'Hello World';
+  private xComponentController: XComponentController = new XComponentController();
+  private cameraManager: camera.CameraManager | null = null;
+  private cameraInput: camera.CameraInput | null = null;
+  private previewOutput: camera.PreviewOutput | null = null;
+  private captureSession: camera.Session | null = null;
+  private previewSurfaceId: string = '';
+  private imageReceiver: image.ImageReceiver | null = null;
+  private receiverSurfaceId: string = '';
+  @State isPreviewing: boolean = false;
+
+  aboutToAppear(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    requestCameraPermission(context).then((granted) => {
+      if (!granted) {
+        console.error('权限未授予');
+      }
+    });
+  }
+
+  async initCamera(): Promise<void> {
+    if (!this.previewSurfaceId) {
+      console.error('SurfaceId 未就绪');
+      return;
+    }
+
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.cameraManager = camera.getCameraManager(context);
+
+      const cameras = this.cameraManager.getSupportedCameras();
+      const backCamera = cameras.find(
+        cam => cam.cameraPosition === camera.CameraPosition.CAMERA_POSITION_BACK
+      ) || cameras[0];
+
+      if (!backCamera) {
+        console.error('未找到可用相机');
+        return;
+      }
+
+      this.cameraInput = this.cameraManager.createCameraInput(backCamera);
+      await this.cameraInput.open();
+
+      // 获取预览流配置（你已有的代码）
+      const outputCapability = this.cameraManager.getSupportedOutputCapability(
+        backCamera, camera.SceneMode.NORMAL_PHOTO
+      );
+      const previewProfile = outputCapability.previewProfiles[0];
+
+      // 第一路：给 XComponent 显示
+      this.previewOutput = this.cameraManager.createPreviewOutput(
+        previewProfile, this.previewSurfaceId
+      );
+
+      // ========== 第二路：给 ImageReceiver 抽帧（双路预览）==========
+      const receiverSize: image.Size = {
+        width: previewProfile.size.width,
+        height: previewProfile.size.height
+      };
+      this.imageReceiver = image.createImageReceiver(
+        receiverSize, image.ImageFormat.JPEG, 8
+      );
+      this.receiverSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
+
+      this.imageReceiver.on('imageArrival', () => {
+        this.imageReceiver?.readNextImage((err: BusinessError, nextImage: image.Image) => {
+          if (err || !nextImage) {
+            console.error(`读取图像失败: ${err?.code}`);
+            return;
+          }
+          console.info('抽到一帧图像: ' + nextImage.size.width + 'x' + nextImage.size.height);
+          nextImage.release();
+        });
+      });
+
+      // 关键：用同一个 previewProfile 创建第二路输出
+      const receiverOutput = this.cameraManager.createPreviewOutput(
+        previewProfile, this.receiverSurfaceId
+      );
+
+      // 把两路输出都加入到 Session
+      this.captureSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.Session;
+      this.captureSession.beginConfig();
+      this.captureSession.addInput(this.cameraInput);
+      this.captureSession.addOutput(this.previewOutput);
+      this.captureSession.addOutput(receiverOutput);
+      await this.captureSession.commitConfig();
+      await this.captureSession.start();
+
+      this.isPreviewing = true;
+      console.info('相机会话启动成功');
+    } catch (err) {
+      const e = err as BusinessError;
+      console.error(`相机初始化失败: code=${e.code}, message=${e.message}`);
+    }
+  }
+
+  async releaseCamera(): Promise<void> {
+    try {
+      if (this.imageReceiver) {
+        this.imageReceiver.off('imageArrival');
+        await this.imageReceiver.release();
+        this.imageReceiver = null;
+      }
+      if (this.captureSession) {
+        await this.captureSession.stop();
+        await this.captureSession.release();
+        this.captureSession = null;
+      }
+      if (this.previewOutput) {
+        await this.previewOutput.release();
+        this.previewOutput = null;
+      }
+      if (this.cameraInput) {
+        await this.cameraInput.close();
+        this.cameraInput = null;
+      }
+      this.isPreviewing = false;
+      console.info('相机已释放');
+    } catch (err) {
+      const e = err as BusinessError;
+      console.error(`释放失败: ${e.code} ${e.message}`);
+    }
+  }
 
   build() {
-    RelativeContainer() {
-      Text(this.message)
-        .id('HelloWorld')
-        .fontSize($r('app.float.page_text_font_size'))
-        .fontWeight(FontWeight.Bold)
-        .alignRules({
-          center: { anchor: '__container__', align: VerticalAlign.Center },
-          middle: { anchor: '__container__', align: HorizontalAlign.Center }
+    Column() {
+      XComponent({
+        id: 'camera_preview',
+        type: XComponentType.SURFACE,
+        controller: this.xComponentController
+      })
+        .width('100%')
+        .height('60%')
+        .onLoad(() => {
+          this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId();
+          console.info('SurfaceId 就绪: ' + this.previewSurfaceId);
         })
-        .onClick(() => {
-          this.message = 'Welcome';
-        })
+
+      Row() {
+        Button('打开相机')
+          .onClick(() => this.initCamera())
+          .enabled(!this.isPreviewing)
+
+        Button('关闭相机')
+          .onClick(() => this.releaseCamera())
+          .enabled(this.isPreviewing)
+      }
+      .margin(20)
     }
-    .height('100%')
     .width('100%')
+    .height('100%')
   }
 }
