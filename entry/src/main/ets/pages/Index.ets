@@ -74,7 +74,7 @@ struct Index {
       this.cameraInput = this.cameraManager.createCameraInput(backCamera);
       await this.cameraInput.open();
 
-      // 获取预览流配置（你已有的代码）
+      // 获取预览流配置
       const outputCapability = this.cameraManager.getSupportedOutputCapability(
         backCamera, camera.SceneMode.NORMAL_PHOTO
       );
@@ -200,7 +200,7 @@ struct Index {
           );
         });
 
-        // 【关键】取置信度最高的目标，传给队友一的接口
+        // 【关键】取置信度最高的目标，接口
         const topObj = response.objects[0];
         const topLabel = LABEL_MAP[topObj.labels[0]] || `未知(${topObj.labels[0]})`;
         this.onObjectDetected(topLabel);
