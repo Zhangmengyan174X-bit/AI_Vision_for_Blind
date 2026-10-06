@@ -23,7 +23,24 @@ struct Index {
   private previewSurfaceId: string = '';
   private imageReceiver: image.ImageReceiver | null = null;
   private receiverSurfaceId: string = '';
+  private lastDetectTime: number = 0;
+  private lastSpokenLabel: string = '';
+  private detectInterval: number = 1000;
   @State isPreviewing: boolean = false;
+
+  onObjectDetected(label: string): void {
+    if (label === this.lastSpokenLabel) {
+      return;
+    }
+    this.lastSpokenLabel = label;
+
+    // ============ 这里是接口 ============
+    // 目前只打印，张雅萱你需要把这里换成 TTS 播报
+    console.info(`【准备播报】前方有${label}`);
+    // 示例：
+    // tts.speak(`前方有${label}`);
+    // ============================================
+  }
 
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -84,7 +101,15 @@ struct Index {
             console.error(`读取图像失败: ${err?.code}`);
             return;
           }
-          console.info('抽到一帧图像: ' + nextImage.size.width + 'x' + nextImage.size.height);
+
+          // 【节流】距上次识别不足 detectInterval 毫秒，跳过本帧
+          const now = Date.now();
+          if (now - this.lastDetectTime < this.detectInterval) {
+            nextImage.release();
+            return;
+          }
+          this.lastDetectTime = now;
+
           this.detectObject(nextImage);
           nextImage.release();
         });
@@ -153,7 +178,6 @@ struct Index {
         srcPixelFormat: image.PixelMapFormat.NV21
       });
 
-      // 关键：用显式类型变量承载，避免 ArkTS 字面量检查
       const imageData: visionBase.ImageData = { pixelMap: pixelMap };
       const request: visionBase.Request = { inputData: imageData };
 
@@ -175,6 +199,11 @@ struct Index {
               `置信度: ${obj.score.toFixed(3)}`
           );
         });
+
+        // 【关键】取置信度最高的目标，传给队友一的接口
+        const topObj = response.objects[0];
+        const topLabel = LABEL_MAP[topObj.labels[0]] || `未知(${topObj.labels[0]})`;
+        this.onObjectDetected(topLabel);
       } else {
         console.info('未识别到目标');
       }
