@@ -3,7 +3,15 @@ import { image } from '@kit.ImageKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
+import { objectDetection, visionBase } from '@kit.CoreVisionKit';
 
+// 标签数字 → 中文
+const LABEL_MAP: Record<number, string> = {
+  0: '风景', 1: '动物', 2: '植物', 3: '建筑',
+  5: '人脸', 6: '表格', 7: '文本', 8: '人头',
+  9: '猫头', 10: '狗头', 11: '食物', 12: '汽车',
+  13: '人体', 21: '文档', 22: '卡证'
+};
 @Entry
 @Component
 struct Index {
@@ -77,6 +85,7 @@ struct Index {
             return;
           }
           console.info('抽到一帧图像: ' + nextImage.size.width + 'x' + nextImage.size.height);
+          this.detectObject(nextImage);
           nextImage.release();
         });
       });
@@ -128,6 +137,53 @@ struct Index {
     } catch (err) {
       const e = err as BusinessError;
       console.error(`释放失败: ${e.code} ${e.message}`);
+    }
+  }
+
+  async detectObject(img: image.Image): Promise<void> {
+    try {
+      const component = await img.getComponent(image.ComponentType.JPEG);
+      if (!component || !component.byteBuffer) {
+        console.error('获取图像数据失败');
+        return;
+      }
+
+      const pixelMap = await image.createPixelMap(component.byteBuffer, {
+        size: { width: 480, height: 480 },
+        srcPixelFormat: image.PixelMapFormat.NV21
+      });
+
+      // 关键：用显式类型变量承载，避免 ArkTS 字面量检查
+      const imageData: visionBase.ImageData = { pixelMap: pixelMap };
+      const request: visionBase.Request = { inputData: imageData };
+
+      const detector = await objectDetection.ObjectDetector.create();
+      if (!detector) {
+        console.error('ObjectDetector 创建失败');
+        pixelMap.release();
+        return;
+      }
+
+      const response = await detector.process(request);
+
+      if (response && response.objects && response.objects.length > 0) {
+        console.info(`识别到 ${response.objects.length} 个目标:`);
+        response.objects.forEach((obj: objectDetection.VisionObject, index: number) => {
+          const labelNames = obj.labels.map((l: number) => LABEL_MAP[l] || `未知(${l})`);
+          console.info(
+            `  [${index}] 标签: ${labelNames.join(', ')}, ` +
+              `置信度: ${obj.score.toFixed(3)}`
+          );
+        });
+      } else {
+        console.info('未识别到目标');
+      }
+
+      await detector.destroy();
+      pixelMap.release();
+    } catch (err) {
+      const e = err as BusinessError;
+      console.error(`识别失败: code=${e.code}, message=${e.message}`);
     }
   }
 
