@@ -173,25 +173,9 @@ struct Index {
         return;
       }
 
-      // 读取真实的图像尺寸（只声明一次）
-      const realWidth = img.size.width;
-      const realHeight = img.size.height;
-
-      // 创建空的 PixelMap
-      const pixelMap = image.createPixelMapSync({
-        size: { width: realWidth, height: realHeight },
-        srcPixelFormat: image.PixelMapFormat.NV21,
-        editable: true
-      });
-
-      // 裁剪掉多余的填充
-      pixelMap.cropSync({
-        x: 0,
-        y: 0,
-        size: {
-          width: realWidth,
-          height: realHeight
-        }
+      const pixelMap = await image.createPixelMap(component.byteBuffer, {
+        size: { width: 480, height: 480 },
+        srcPixelFormat: image.PixelMapFormat.NV21
       });
 
       const imageData: visionBase.ImageData = { pixelMap: pixelMap };
@@ -216,7 +200,7 @@ struct Index {
           );
         });
 
-        // 取置信度最高的目标，传给队友一的接口
+        // 【关键】取置信度最高的目标，接口
         const topObj = response.objects[0];
         const topLabel = LABEL_MAP[topObj.labels[0]] || `未知(${topObj.labels[0]})`;
         this.onObjectDetected(topLabel);
