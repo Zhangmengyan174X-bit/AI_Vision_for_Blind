@@ -12,6 +12,7 @@ const LABEL_MAP: Record<number, string> = {
   9: '猫头', 10: '狗头', 11: '食物', 12: '汽车',
   13: '人体', 21: '文档', 22: '卡证'
 };
+
 @Entry
 @Component
 struct Index {
@@ -110,8 +111,10 @@ struct Index {
           }
           this.lastDetectTime = now;
 
-          this.detectObject(nextImage);
-          nextImage.release();
+          // 注意：不能在这里直接 release，要在 detectObject 完成后释放
+          this.detectObject(nextImage).finally(() => {
+            nextImage.release();
+          });
         });
       });
 
@@ -166,41 +169,44 @@ struct Index {
   }
 
   async detectObject(img: image.Image): Promise<void> {
+    let imageSource: image.ImageSource | null = null;
+    let pixelMap: image.PixelMap | null = null;
+
     try {
+      // 获取 NV21 原始数据
       const component = await img.getComponent(image.ComponentType.JPEG);
       if (!component || !component.byteBuffer) {
-        console.error('获取图像数据失败');
+        console.error('获取图像数据失败或数据为空');
         return;
       }
 
-      // 读取真实的图像尺寸（只声明一次）
-      const realWidth = img.size.width;
-      const realHeight = img.size.height;
+      // 关键修改：使用 ImageSource 来解码 NV21 数据，而不是 createPixelMapSync
+      const sourceOptions: image.SourceOptions = {
+        sourcePixelFormat: image.PixelMapFormat.NV21,
+        sourceSize: {
+          width: img.size.width,
+          height: img.size.height
+        },
+        sourceDensity: 120
+      };
 
-      // 创建空的 PixelMap
-      const pixelMap = image.createPixelMapSync({
-        size: { width: realWidth, height: realHeight },
-        srcPixelFormat: image.PixelMapFormat.NV21,
-        editable: true
-      });
+      imageSource = image.createImageSource(component.byteBuffer, sourceOptions);
+      if (!imageSource) {
+        console.error('创建 ImageSource 失败');
+        return;
+      }
 
-      // 裁剪掉多余的填充
-      pixelMap.cropSync({
-        x: 0,
-        y: 0,
-        size: {
-          width: realWidth,
-          height: realHeight
-        }
-      });
+      // 创建 PixelMap
+      pixelMap = await imageSource.createPixelMap();
 
+      // 构建识别请求
       const imageData: visionBase.ImageData = { pixelMap: pixelMap };
       const request: visionBase.Request = { inputData: imageData };
 
+      // 创建检测器并识别
       const detector = await objectDetection.ObjectDetector.create();
       if (!detector) {
         console.error('ObjectDetector 创建失败');
-        pixelMap.release();
         return;
       }
 
@@ -225,10 +231,17 @@ struct Index {
       }
 
       await detector.destroy();
-      pixelMap.release();
     } catch (err) {
       const e = err as BusinessError;
       console.error(`识别失败: code=${e.code}, message=${e.message}`);
+    } finally {
+      // 确保资源被释放
+      if (pixelMap) {
+        pixelMap.release();
+      }
+      if (imageSource) {
+        imageSource.release();
+      }
     }
   }
 
