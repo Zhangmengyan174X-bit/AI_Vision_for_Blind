@@ -4,6 +4,9 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
 import { objectDetection, visionBase } from '@kit.CoreVisionKit';
+import { SpeechManager } from '../utils/SpeechManager';
+import { RecognitionPage } from '../ui/pages/RecognitionPage';
+import { SettingsPage } from '../ui/pages/SettingsPage';
 
 // 标签数字 → 中文
 const LABEL_MAP: Record<number, string> = {
@@ -16,6 +19,7 @@ const LABEL_MAP: Record<number, string> = {
 @Entry
 @Component
 struct Index {
+  @Provide('pageStack') pageStack: NavPathStack = new NavPathStack()
   private xComponentController: XComponentController = new XComponentController();
   private cameraManager: camera.CameraManager | null = null;
   private cameraInput: camera.CameraInput | null = null;
@@ -36,21 +40,23 @@ struct Index {
     }
     this.lastSpokenLabel = label;
 
-    // ============ 这里是接口 ============
-    // 目前只打印，张雅萱你需要把这里换成 TTS 播报
-    console.info(`【准备播报】前方有${label}`);
-    // 示例：
-    // tts.speak(`前方有${label}`);
-    // ============================================
+    // 调用 TTS 播报
+    SpeechManager.getInstance().speak(`前方有${label}`);
   }
 
   aboutToAppear(): void {
+    SpeechManager.getInstance().init();
+
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     requestCameraPermission(context).then((granted) => {
       if (!granted) {
         console.error('权限未授予');
       }
     });
+  }
+
+  aboutToDisappear(): void {
+    SpeechManager.getInstance().shutdown();
   }
 
   async initCamera(): Promise<void> {
@@ -253,32 +259,107 @@ struct Index {
     }
   }
 
-  build() {
-    Column() {
-      XComponent({
-        id: 'camera_preview',
-        type: XComponentType.SURFACE,
-        controller: this.xComponentController
-      })
-        .width('100%')
-        .height('60%')
-        .onLoad(() => {
-          this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId();
-          console.info('SurfaceId 就绪: ' + this.previewSurfaceId);
+  @Builder
+  buildCameraPage() {
+    NavDestination() {
+      Column() {
+        XComponent({
+          id: 'camera_preview',
+          type: XComponentType.SURFACE,
+          controller: this.xComponentController
         })
+          .width('100%')
+          .height('60%')
+          .onLoad(() => {
+            this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId();
+            console.info('SurfaceId 就绪: ' + this.previewSurfaceId);
+          })
 
-      Row() {
-        Button('打开相机')
-          .onClick(() => this.initCamera())
-          .enabled(!this.isPreviewing)
+        Row() {
+          Button('打开相机')
+            .onClick(() => this.initCamera())
+            .enabled(!this.isPreviewing)
 
-        Button('关闭相机')
-          .onClick(() => this.releaseCamera())
-          .enabled(this.isPreviewing)
+          Button('关闭相机')
+            .onClick(() => this.releaseCamera())
+            .enabled(this.isPreviewing)
+        }
+        .margin(20)
       }
-      .margin(20)
+      .width('100%')
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
+    .hideTitleBar(true)
+  }
+
+  build() {
+    Navigation(this.pageStack) {
+      this.buildWelcomePage()
+    }
+    .navDestination(this.PageMap)
+    .mode(NavigationMode.Stack)
+    .hideTitleBar(true)
+  }
+
+  @Builder
+  buildWelcomePage() {
+    NavDestination() {
+      Column() {
+        Text('声视')
+          .fontSize(36)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1F2933')
+
+        Text('智能视觉辅助')
+          .fontSize(18)
+          .fontColor('#667085')
+          .margin({ top: 8 })
+
+        Blank()
+
+        Button('开始识别')
+          .width('80%')
+          .height(70)
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .backgroundColor('#356D73')
+          .borderRadius(24)
+          .onClick(() => {
+            this.pageStack.pushPath({ name: 'CameraPage' })
+          })
+
+        Blank()
+
+        Button('设置')
+          .width('80%')
+          .height(60)
+          .fontSize(20)
+          .fontColor('#356D73')
+          .backgroundColor('#E8F1EF')
+          .borderRadius(24)
+          .margin({ top: 16 })
+          .onClick(() => {
+            this.pageStack.pushPath({ name: 'SettingsPage' })
+          })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#F4F7F6')
+      .padding({ left: 28, right: 28 })
+      .justifyContent(FlexAlign.Center)
+    }
+    .hideTitleBar(true)
+  }
+
+  @Builder
+  PageMap(name: string) {
+    if (name === 'CameraPage') {
+      this.buildCameraPage()
+    } else if (name === 'RecognitionPage') {
+      RecognitionPage()
+    } else if (name === 'SettingsPage') {
+      SettingsPage()
+    }
   }
 }
