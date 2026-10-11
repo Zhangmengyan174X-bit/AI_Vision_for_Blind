@@ -3,18 +3,10 @@ import { image } from '@kit.ImageKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
-import { objectDetection, visionBase } from '@kit.CoreVisionKit';
 import { SpeechManager } from '../utils/SpeechManager';
 import { RecognitionPage } from '../ui/pages/RecognitionPage';
 import { SettingsPage } from '../ui/pages/SettingsPage';
-
-// 标签数字 → 中文
-const LABEL_MAP: Record<number, string> = {
-  0: '风景', 1: '动物', 2: '植物', 3: '建筑',
-  5: '人脸', 6: '表格', 7: '文本', 8: '人头',
-  9: '猫头', 10: '狗头', 11: '食物', 12: '汽车',
-  13: '人体', 21: '文档', 22: '卡证'
-};
+import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
 
 @Entry
 @Component
@@ -32,22 +24,45 @@ struct Index {
   private lastSpokenLabel: string = '';
   private detectInterval: number = 1000;
   private isDetecting: boolean = false;
+
+  // YOLO 检测器
+  private yoloDetector: YoloDetector | null = null;
+
   @State isPreviewing: boolean = false;
 
-  onObjectDetected(label: string): void {
-    if (label === this.lastSpokenLabel) {
+  // 张雅萱后续在这里做优先级判定 + 去重 + TTS
+  onObjectDetected(objects: DetectedObject[]): void {
+    if (objects.length === 0) {
       return;
     }
-    this.lastSpokenLabel = label;
 
-    // 调用 TTS 播报
-    SpeechManager.getInstance().speak(`前方有${label}`);
+    // 暂时取置信度最高的播报（YoloDetector 已经按 score 降序排好）
+    const best = objects[0];
+
+    // 简易去重：同一标签不重复播报
+    if (best.label === this.lastSpokenLabel) {
+      return;
+    }
+    this.lastSpokenLabel = best.label;
+
+    SpeechManager.getInstance().speak(`前方有${best.label}`);
   }
 
   aboutToAppear(): void {
     SpeechManager.getInstance().init();
 
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+
+    // 加载 YOLO 模型
+    this.yoloDetector = new YoloDetector(context);
+    this.yoloDetector.loadModel().then((success: boolean) => {
+      if (success) {
+        console.info('YOLO 模型加载成功');
+      } else {
+        console.error('YOLO 模型加载失败');
+      }
+    });
+
     requestCameraPermission(context).then((granted) => {
       if (!granted) {
         console.error('权限未授予');
@@ -57,6 +72,10 @@ struct Index {
 
   aboutToDisappear(): void {
     SpeechManager.getInstance().shutdown();
+    if (this.yoloDetector) {
+      this.yoloDetector.release();
+      this.yoloDetector = null;
+    }
   }
 
   async initCamera(): Promise<void> {
@@ -109,13 +128,11 @@ struct Index {
             return;
           }
 
-          // 节流：距上次识别不足 detectInterval 毫秒，跳过
           const now = Date.now();
           if (now - this.lastDetectTime < this.detectInterval) {
             nextImage.release();
             return;
           }
-          // 并发保护：上一帧还在识别，跳过这一帧
           if (this.isDetecting) {
             nextImage.release();
             return;
@@ -123,7 +140,6 @@ struct Index {
           this.lastDetectTime = now;
           this.isDetecting = true;
 
-          // 等识别完成后再释放 nextImage
           this.detectObject(nextImage).finally(() => {
             this.isDetecting = false;
             nextImage.release();
@@ -131,7 +147,6 @@ struct Index {
         });
       });
 
-      // 第二路输出
       const receiverOutput = this.cameraManager.createPreviewOutput(
         previewProfile, this.receiverSurfaceId
       );
@@ -181,22 +196,27 @@ struct Index {
   }
 
   async detectObject(img: image.Image): Promise<void> {
+    if (this.yoloDetector === null) {
+      console.error('YOLO 检测器未初始化');
+      return;
+    }
+
     let imageSource: image.ImageSource | null = null;
     let pixelMap: image.PixelMap | null = null;
 
     try {
-      // 1. 拿到原始字节数据
+      // 1. 拿原始字节
       const component = await img.getComponent(image.ComponentType.JPEG);
       if (!component || !component.byteBuffer) {
-        console.error('获取图像数据失败或数据为空');
+        console.error('获取图像数据失败');
         return;
       }
 
-      // 2. 从 img 获取真实宽高（不能用 component.size，它不存在）
+      // 2. 真实宽高
       const realWidth = img.size.width;
       const realHeight = img.size.height;
 
-      // 3. 用 ImageSource 解码 NV21 数据
+      // 3. 解码成 PixelMap
       const sourceOptions: image.SourceOptions = {
         sourcePixelFormat: image.PixelMapFormat.NV21,
         sourceSize: {
@@ -214,38 +234,21 @@ struct Index {
 
       pixelMap = await imageSource.createPixelMap();
 
-      // 4. 构建请求，调用 AI 识别
-      const imageData: visionBase.ImageData = { pixelMap: pixelMap };
-      const request: visionBase.Request = { inputData: imageData };
+      // 4. 预处理成 YOLO 需要的 Float32Array
+      const inputData: Float32Array = await this.preprocessImage(pixelMap);
 
-      const detector = await objectDetection.ObjectDetector.create();
-      if (!detector) {
-        console.error('ObjectDetector 创建失败');
-        return;
-      }
+      // 5. YOLO 推理
+      const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
 
-      const response = await detector.process(request);
-
-      // 5. 处理识别结果
-      if (response && response.objects && response.objects.length > 0) {
-        console.info(`识别到 ${response.objects.length} 个目标:`);
-        response.objects.forEach((obj: objectDetection.VisionObject, index: number) => {
-          const labelNames = obj.labels.map((l: number) => LABEL_MAP[l] || `未知(${l})`);
-          console.info(
-            `  [${index}] 标签: ${labelNames.join(', ')}, ` +
-              `置信度: ${obj.score.toFixed(3)}`
-          );
+      if (objects.length > 0) {
+        console.info(`YOLO 识别到 ${objects.length} 个目标`);
+        objects.forEach((obj: DetectedObject, index: number) => {
+          console.info(`  [${index}] ${obj.label} score=${obj.score.toFixed(3)}`);
         });
-
-        // 取置信度最高的目标，传给 onObjectDetected
-        const topObj = response.objects[0];
-        const topLabel = LABEL_MAP[topObj.labels[0]] || `未知(${topObj.labels[0]})`;
-        this.onObjectDetected(topLabel);
+        this.onObjectDetected(objects);
       } else {
-        console.info('未识别到目标');
+        console.info('YOLO 未识别到目标');
       }
-
-      await detector.destroy();
     } catch (err) {
       const e = err as BusinessError;
       console.error(`识别失败: code=${e.code}, message=${e.message}`);
@@ -256,6 +259,40 @@ struct Index {
       if (imageSource) {
         imageSource.release();
       }
+    }
+  }
+
+  /**
+   * 把 PixelMap 预处理成 YOLO 需要的输入：
+   * 1×3×640×640 的 Float32Array，归一化到 0~1，CHW 顺序
+   */
+  private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
+    const INPUT_SIZE = 640;
+    try {
+      // 1. 缩放到 640x640
+      const info = pixelMap.getImageInfoSync();
+      const scaleX = INPUT_SIZE / info.size.width;
+      const scaleY = INPUT_SIZE / info.size.height;
+      await pixelMap.scale(scaleX, scaleY);
+
+      // 2. 读 RGBA 像素
+      const buffer = new ArrayBuffer(INPUT_SIZE * INPUT_SIZE * 4);
+      await pixelMap.readPixelsToBuffer(buffer);
+      const rgba = new Uint8Array(buffer);
+
+      // 3. 转 CHW Float32，归一化到 0~1
+      const float32 = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
+      const channelSize = INPUT_SIZE * INPUT_SIZE;
+      for (let i = 0; i < channelSize; i++) {
+        float32[i] = rgba[i * 4] / 255.0;
+        float32[channelSize + i] = rgba[i * 4 + 1] / 255.0;
+        float32[channelSize * 2 + i] = rgba[i * 4 + 2] / 255.0;
+      }
+      return float32;
+    } catch (err) {
+      const e = err as BusinessError;
+      console.error(`预处理失败: code=${e.code}, message=${e.message}`);
+      return new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
     }
   }
 
