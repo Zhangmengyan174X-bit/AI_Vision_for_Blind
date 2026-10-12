@@ -2,6 +2,7 @@
 import { mindSporeLite } from '@kit.MindSporeLiteKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 // COCO 80类标签
 const COCO_LABELS: string[] = [
@@ -94,15 +95,30 @@ export class YoloDetector {
 
     try {
       const modelInputs: mindSporeLite.MSTensor[] = this.model.getInputs();
+      hilog.info(0xFF00, 'YoloDetector', `输入张量数量: ${modelInputs.length}`);
+
       if (modelInputs.length === 0) {
+        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回空');
         return [];
       }
 
-      modelInputs[0].setData(inputBuffer.buffer);
+      const inputTensor = modelInputs[0];
+      hilog.info(0xFF00, 'YoloDetector',
+        `输入 shape: ${JSON.stringify(inputTensor.shape)}, ` +
+          `dtype: ${inputTensor.dataType}, ` +
+          `数据长度: ${inputBuffer.length}`);
+
+      inputTensor.setData(inputBuffer.buffer);
+      hilog.info(0xFF00, 'YoloDetector', 'setData 成功，开始 predict');
+
       const outputs: mindSporeLite.MSTensor[] = await this.model.predict(modelInputs);
+      hilog.info(0xFF00, 'YoloDetector', `predict 成功，输出数量: ${outputs.length}`);
+
       return this.parseOutput(outputs);
     } catch (error) {
-      hilog.error(0xFF00, 'YoloDetector', `推理失败: ${JSON.stringify(error)}`);
+      const e = error as BusinessError;
+      hilog.error(0xFF00, 'YoloDetector',
+        `推理失败: code=${e.code}, message=${e.message}`);
       return [];
     }
   }
