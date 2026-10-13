@@ -7,6 +7,7 @@ import { SpeechManager } from '../utils/SpeechManager';
 import { RecognitionPage } from '../ui/pages/RecognitionPage';
 import { SettingsPage } from '../ui/pages/SettingsPage';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 @Entry
 @Component
@@ -236,6 +237,10 @@ struct Index {
 
       // 4. 预处理成 YOLO 需要的 Float32Array
       const inputData: Float32Array = await this.preprocessImage(pixelMap);
+      if (!inputData || inputData.length === 0) {
+        console.error('preprocessImage 返回空数据');
+        return;
+      }
 
       // 5. YOLO 推理
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
@@ -268,19 +273,27 @@ struct Index {
    */
   private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
     const INPUT_SIZE = 640;
+    const defaultResult = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
+
     try {
-      // 1. 缩放到 640x640
       const info = pixelMap.getImageInfoSync();
+      if (!info || !info.size) {
+        console.error('getImageInfoSync 返回空');
+        return defaultResult;
+      }
+
+      console.info(`原始尺寸: ${info.size.width}x${info.size.height}`);
+
       const scaleX = INPUT_SIZE / info.size.width;
       const scaleY = INPUT_SIZE / info.size.height;
       await pixelMap.scale(scaleX, scaleY);
 
-      // 2. 读 RGBA 像素
       const buffer = new ArrayBuffer(INPUT_SIZE * INPUT_SIZE * 4);
       await pixelMap.readPixelsToBuffer(buffer);
       const rgba = new Uint8Array(buffer);
 
-      // 3. 转 CHW Float32，归一化到 0~1
+      console.info(`RGBA 字节数: ${rgba.length}, 期望: ${INPUT_SIZE * INPUT_SIZE * 4}`);
+
       const float32 = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
       const channelSize = INPUT_SIZE * INPUT_SIZE;
       for (let i = 0; i < channelSize; i++) {
@@ -292,7 +305,7 @@ struct Index {
     } catch (err) {
       const e = err as BusinessError;
       console.error(`预处理失败: code=${e.code}, message=${e.message}`);
-      return new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
+      return defaultResult;
     }
   }
 
