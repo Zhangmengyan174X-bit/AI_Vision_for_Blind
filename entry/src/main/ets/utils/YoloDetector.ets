@@ -19,7 +19,6 @@ const COCO_LABELS: string[] = [
   '吹风机', '牙刷'
 ];
 
-// 边界框接口
 export interface BoundingBox {
   left: number;
   top: number;
@@ -27,7 +26,6 @@ export interface BoundingBox {
   height: number;
 }
 
-// 给张雅萱用的输出结构
 export interface DetectedObject {
   label: string;
   labelId: number;
@@ -35,16 +33,15 @@ export interface DetectedObject {
   box: BoundingBox;
 }
 
-// MindSpore Lite 的 Context 配置接口（ArkTS 要求显式声明）
-interface MsContext {
-  target: string[];
-  cpu: MsCpuConfig;
-}
-
 interface MsCpuConfig {
   threadNum: number;
   threadAffinityMode: number;
   precisionMode: string;
+}
+
+interface MsContext {
+  target: string[];
+  cpu: MsCpuConfig;
 }
 
 export class YoloDetector {
@@ -63,7 +60,6 @@ export class YoloDetector {
         await this.context.resourceManager.getRawFileContent(this.MODEL_NAME);
       const modelBuffer: ArrayBuffer = rawFileContent.buffer as ArrayBuffer;
 
-      // 用显式声明的接口，不能写对象字面量当类型
       const cpuConfig: MsCpuConfig = {
         threadNum: 4,
         threadAffinityMode: 1,
@@ -82,34 +78,64 @@ export class YoloDetector {
       hilog.info(0xFF00, 'YoloDetector', '模型加载成功');
       return true;
     } catch (error) {
-      hilog.error(0xFF00, 'YoloDetector', `模型加载失败: ${JSON.stringify(error)}`);
+      const e = error as BusinessError;
+      hilog.error(0xFF00, 'YoloDetector',
+        `模型加载失败: code=${e.code}, message=${e.message}`);
       return false;
     }
   }
 
   async detect(inputBuffer: Float32Array): Promise<DetectedObject[]> {
+    hilog.info(0xFF00, 'YoloDetector', '=== detect 进入 ===');
+
     if (this.model === null) {
       hilog.error(0xFF00, 'YoloDetector', '模型未加载');
       return [];
     }
 
+    if (!inputBuffer) {
+      hilog.error(0xFF00, 'YoloDetector', 'inputBuffer 为 undefined');
+      return [];
+    }
+    hilog.info(0xFF00, 'YoloDetector', `输入数据长度: ${inputBuffer.length}`);
+
     try {
+      hilog.info(0xFF00, 'YoloDetector', '准备调用 getInputs');
       const modelInputs: mindSporeLite.MSTensor[] = this.model.getInputs();
+
+      if (!modelInputs) {
+        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回 undefined');
+        return [];
+      }
       hilog.info(0xFF00, 'YoloDetector', `输入张量数量: ${modelInputs.length}`);
 
       if (modelInputs.length === 0) {
-        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回空');
+        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回空数组');
         return [];
       }
 
       const inputTensor = modelInputs[0];
-      hilog.info(0xFF00, 'YoloDetector', `数据长度: ${inputBuffer.length}`);
+      if (!inputTensor) {
+        hilog.error(0xFF00, 'YoloDetector', 'modelInputs[0] 为 undefined');
+        return [];
+      }
 
+      hilog.info(0xFF00, 'YoloDetector', '准备 setData');
       inputTensor.setData(inputBuffer.buffer);
-      hilog.info(0xFF00, 'YoloDetector', 'setData 成功，开始 predict');
+      hilog.info(0xFF00, 'YoloDetector', 'setData 成功，准备 predict');
 
       const outputs: mindSporeLite.MSTensor[] = await this.model.predict(modelInputs);
+
+      if (!outputs) {
+        hilog.error(0xFF00, 'YoloDetector', 'predict 返回 undefined');
+        return [];
+      }
       hilog.info(0xFF00, 'YoloDetector', `predict 成功，输出数量: ${outputs.length}`);
+
+      if (outputs.length === 0) {
+        hilog.error(0xFF00, 'YoloDetector', '输出为空');
+        return [];
+      }
 
       return this.parseOutput(outputs);
     } catch (error) {
@@ -120,38 +146,45 @@ export class YoloDetector {
     }
   }
 
+  /**
+   * YOLOv8 输出格式：[1, 84, 8400]
+   * 84 = 4 坐标 + 80 类别，没有单独置信度
+   * 注意：数据是转置的，按列访问
+   */
   private parseOutput(outputs: mindSporeLite.MSTensor[]): DetectedObject[] {
-    if (outputs.length === 0) return [];
+    if (!outputs || outputs.length === 0) return [];
 
-    const outputData = new Float32Array(outputs[0].getData());
+    const rawData = outputs[0].getData();
+    if (!rawData) {
+      hilog.error(0xFF00, 'YoloDetector', 'getData 返回 undefined');
+      return [];
+    }
+
+    const outputData = new Float32Array(rawData);
+    hilog.info(0xFF00, 'YoloDetector', `输出数据长度: ${outputData.length}`);
+
     const results: DetectedObject[] = [];
-
-    const numBoxes = 25200;
-    const valuesPerBox = 85;
+    const numClasses = 80;
+    const numBoxes = 8400;
 
     for (let i = 0; i < numBoxes; i++) {
-      const offset = i * valuesPerBox;
-
-      const confidence = outputData[offset + 4];
-      if (confidence < 0.5) continue;
-
+      // YOLOv8: 第 4 行是类别置信度最大的那个
       let maxClassScore = 0;
       let maxClassId = -1;
-      for (let c = 0; c < 80; c++) {
-        const classScore = outputData[offset + 5 + c];
+      for (let c = 0; c < numClasses; c++) {
+        const classScore = outputData[(4 + c) * numBoxes + i];
         if (classScore > maxClassScore) {
           maxClassScore = classScore;
           maxClassId = c;
         }
       }
 
-      const finalScore = confidence * maxClassScore;
-      if (finalScore < 0.5) continue;
+      if (maxClassScore < 0.5) continue;
 
-      const cx = outputData[offset + 0] / this.INPUT_SIZE;
-      const cy = outputData[offset + 1] / this.INPUT_SIZE;
-      const w = outputData[offset + 2] / this.INPUT_SIZE;
-      const h = outputData[offset + 3] / this.INPUT_SIZE;
+      const cx = outputData[0 * numBoxes + i] / this.INPUT_SIZE;
+      const cy = outputData[1 * numBoxes + i] / this.INPUT_SIZE;
+      const w = outputData[2 * numBoxes + i] / this.INPUT_SIZE;
+      const h = outputData[3 * numBoxes + i] / this.INPUT_SIZE;
 
       const box: BoundingBox = {
         left: cx - w / 2,
@@ -163,11 +196,12 @@ export class YoloDetector {
       results.push({
         label: COCO_LABELS[maxClassId] || `物体${maxClassId}`,
         labelId: maxClassId,
-        score: finalScore,
+        score: maxClassScore,
         box: box
       });
     }
 
+    hilog.info(0xFF00, 'YoloDetector', `解析出 ${results.length} 个目标`);
     return results.sort((a, b) => b.score - a.score);
   }
 
