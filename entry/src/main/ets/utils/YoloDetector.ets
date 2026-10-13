@@ -103,10 +103,7 @@ export class YoloDetector {
       }
 
       const inputTensor = modelInputs[0];
-      hilog.info(0xFF00, 'YoloDetector',
-        `输入 shape: ${JSON.stringify(inputTensor.shape)}, ` +
-          `dtype: ${inputTensor.dataType}, ` +
-          `数据长度: ${inputBuffer.length}`);
+      hilog.info(0xFF00, 'YoloDetector', `数据长度: ${inputBuffer.length}`);
 
       inputTensor.setData(inputBuffer.buffer);
       hilog.info(0xFF00, 'YoloDetector', 'setData 成功，开始 predict');
