@@ -7,7 +7,7 @@ import { SpeechManager } from '../utils/SpeechManager';
 import { RecognitionPage } from '../ui/pages/RecognitionPage';
 import { SettingsPage } from '../ui/pages/SettingsPage';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { mindSporeLite } from '@kit.MindSporeLiteKit';
 
 @Entry
 @Component
@@ -52,6 +52,9 @@ struct Index {
   aboutToAppear(): void {
     SpeechManager.getInstance().init();
 
+    // 先查 NNRT 设备枚举（用于判断 NPU 路径是否可用）
+    this.inspectNNRT();
+
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
 
     // 加载 YOLO 模型
@@ -69,6 +72,27 @@ struct Index {
         console.error('权限未授予');
       }
     });
+  }
+
+  /**
+   * 枚举当前环境暴露的 NNRT 设备，判断 NPU 推理路径是否可用。
+   * 若该方法在当前 SDK 中不存在，编译会报错，届时删掉此方法及调用即可。
+   */
+  private inspectNNRT(): void {
+    try {
+      const devices = mindSporeLite.getAllNNRTDeviceDescriptions();
+      console.info(`[NNRT] device count = ${devices.length}`);
+      for (let i = 0; i < devices.length; i++) {
+        const d = devices[i];
+        const idStr: string = d.deviceID().toString();
+        const typeStr: string = d.deviceType().toString();
+        const nameStr: string = d.deviceName();
+        console.info(`[NNRT] id=${idStr}, type=${typeStr}, name=${nameStr}`);
+      }
+    } catch (e) {
+      const err = e as BusinessError;
+      console.error(`[NNRT] enumeration failed: code=${err.code}, message=${err.message}`);
+    }
   }
 
   aboutToDisappear(): void {
