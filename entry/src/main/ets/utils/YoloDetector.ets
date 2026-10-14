@@ -49,63 +49,19 @@ export class YoloDetector {
         await this.context.resourceManager.getRawFileContent(this.MODEL_NAME);
       const modelBuffer: ArrayBuffer = rawFileContent.buffer as ArrayBuffer;
 
-      // CPU 配置（官方类型 CpuDevice）
       const cpuConfig: mindSporeLite.CpuDevice = {
         threadNum: 4,
         threadAffinityMode: mindSporeLite.ThreadAffinityMode.BIG_CORES_FIRST,
         precisionMode: 'enforce_fp32'
       };
 
-      // 枚举 NNRT 设备，找加速器（NPU）
-      let nnrtDeviceID: bigint | undefined = undefined;
-      let nnrtName: string = '';
-      try {
-        const devices = mindSporeLite.getAllNNRTDeviceDescriptions();
-        hilog.info(0xFF00, 'YoloDetector', `[NNRT] 枚举到 ${devices.length} 个设备`);
-        for (let i = 0; i < devices.length; i++) {
-          const d = devices[i];
-          const idStr: string = d.deviceID().toString();
-          const typeStr: string = d.deviceType().toString();
-          const nameStr: string = d.deviceName();
-          hilog.info(0xFF00, 'YoloDetector',
-            `[NNRT] id=${idStr}, type=${typeStr}, name=${nameStr}`);
-
-          if (d.deviceType() === mindSporeLite.NNRTDeviceType.NNRTDEVICE_ACCELERATOR
-            && nnrtDeviceID === undefined) {
-            nnrtDeviceID = d.deviceID();
-            nnrtName = nameStr;
-          }
-        }
-      } catch (err) {
-        const e = err as BusinessError;
-        hilog.error(0xFF00, 'YoloDetector',
-          `[NNRT] 枚举失败: code=${e.code}, message=${e.message}`);
-      }
-
-      // 组装 MsContext
-      let msContext: mindSporeLite.Context;
-      if (nnrtDeviceID !== undefined) {
-        msContext = {
-          target: ['nnrt', 'cpu'],
-          cpu: cpuConfig,
-          nnrt: {
-            deviceID: nnrtDeviceID,
-            performanceMode: mindSporeLite.PerformanceMode.PERFORMANCE_HIGH,
-            priority: mindSporeLite.Priority.PRIORITY_HIGH
-          }
-        };
-        hilog.info(0xFF00, 'YoloDetector',
-          `[NNRT] 使用 NPU + CPU 混合推理, device=${nnrtName}`);
-      } else {
-        msContext = {
-          target: ['cpu'],
-          cpu: cpuConfig
-        };
-        hilog.warn(0xFF00, 'YoloDetector', '[NNRT] 未发现加速器，回退纯 CPU');
-      }
+      const msContext: mindSporeLite.Context = {
+        target: ['cpu'],
+        cpu: cpuConfig
+      };
 
       this.model = await mindSporeLite.loadModelFromBuffer(modelBuffer, msContext);
-      hilog.info(0xFF00, 'YoloDetector', '模型加载成功');
+      hilog.info(0xFF00, 'YoloDetector', '模型加载成功（CPU）');
       return true;
     } catch (error) {
       const e = error as BusinessError;
@@ -116,8 +72,6 @@ export class YoloDetector {
   }
 
   async detect(inputBuffer: Float32Array): Promise<DetectedObject[]> {
-    hilog.info(0xFF00, 'YoloDetector', '=== detect 进入 ===');
-
     if (this.model === null) {
       hilog.error(0xFF00, 'YoloDetector', '模型未加载');
       return [];
@@ -127,20 +81,12 @@ export class YoloDetector {
       hilog.error(0xFF00, 'YoloDetector', 'inputBuffer 为 undefined');
       return [];
     }
-    hilog.info(0xFF00, 'YoloDetector', `输入数据长度: ${inputBuffer.length}`);
 
     try {
-      hilog.info(0xFF00, 'YoloDetector', '准备调用 getInputs');
       const modelInputs: mindSporeLite.MSTensor[] = this.model.getInputs();
 
-      if (!modelInputs) {
-        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回 undefined');
-        return [];
-      }
-      hilog.info(0xFF00, 'YoloDetector', `输入张量数量: ${modelInputs.length}`);
-
-      if (modelInputs.length === 0) {
-        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回空数组');
+      if (!modelInputs || modelInputs.length === 0) {
+        hilog.error(0xFF00, 'YoloDetector', 'getInputs 返回空');
         return [];
       }
 
@@ -150,37 +96,12 @@ export class YoloDetector {
         return [];
       }
 
-      hilog.info(0xFF00, 'YoloDetector', '准备 setData');
-
-
-      let sum = 0;
-      let minV = 1e9;
-      let maxV = -1e9;
-      for (let i = 0; i < inputBuffer.length; i++) {
-        const v = inputBuffer[i];
-        sum += v;
-        if (v < minV) minV = v;
-        if (v > maxV) maxV = v;
-      }
-      const mean = sum / inputBuffer.length;
-      hilog.info(0xFF00, 'YoloDetector',
-        `输入统计: min=${minV.toFixed(4)}, max=${maxV.toFixed(4)}, mean=${mean.toFixed(4)}`);
-
-
-
       inputTensor.setData(inputBuffer.buffer);
-      hilog.info(0xFF00, 'YoloDetector', 'setData 成功，准备 predict');
 
       const outputs: mindSporeLite.MSTensor[] = await this.model.predict(modelInputs);
 
-      if (!outputs) {
-        hilog.error(0xFF00, 'YoloDetector', 'predict 返回 undefined');
-        return [];
-      }
-      hilog.info(0xFF00, 'YoloDetector', `predict 成功，输出数量: ${outputs.length}`);
-
-      if (outputs.length === 0) {
-        hilog.error(0xFF00, 'YoloDetector', '输出为空');
+      if (!outputs || outputs.length === 0) {
+        hilog.error(0xFF00, 'YoloDetector', 'predict 输出为空');
         return [];
       }
 
@@ -208,48 +129,10 @@ export class YoloDetector {
     }
 
     const outputData = new Float32Array(rawData);
-    hilog.info(0xFF00, 'YoloDetector', `输出数据长度: ${outputData.length}`);
-
     const results: DetectedObject[] = [];
     const numClasses = 80;
     const numBoxes = 8400;
 
-    // 全量输出统计
-    let outMin = 1e9;
-    let outMax = -1e9;
-    for (let i = 0; i < outputData.length; i++) {
-      const v = outputData[i];
-      if (v < outMin) outMin = v;
-      if (v > outMax) outMax = v;
-    }
-    hilog.info(0xFF00, 'YoloDetector',
-      `输出统计: min=${outMin.toFixed(4)}, max=${outMax.toFixed(4)}`);
-
-    // 打印前 8 行和后 3 行的数值范围
-    for (let r = 0; r < 8; r++) {
-      let rowMin = 1e9;
-      let rowMax = -1e9;
-      for (let i = 0; i < numBoxes; i++) {
-        const v = outputData[r * numBoxes + i];
-        if (v < rowMin) rowMin = v;
-        if (v > rowMax) rowMax = v;
-      }
-      hilog.info(0xFF00, 'YoloDetector',
-        `行[${r}]: min=${rowMin.toFixed(3)}, max=${rowMax.toFixed(3)}`);
-    }
-    for (let r = 81; r < 84; r++) {
-      let rowMin = 1e9;
-      let rowMax = -1e9;
-      for (let i = 0; i < numBoxes; i++) {
-        const v = outputData[r * numBoxes + i];
-        if (v < rowMin) rowMin = v;
-        if (v > rowMax) rowMax = v;
-      }
-      hilog.info(0xFF00, 'YoloDetector',
-        `行[${r}]: min=${rowMin.toFixed(3)}, max=${rowMax.toFixed(3)}`);
-    }
-
-    // 主循环：遍历 8400 个框
     for (let i = 0; i < numBoxes; i++) {
       let maxClassScore = 0;
       let maxClassId = -1;
@@ -286,6 +169,7 @@ export class YoloDetector {
     hilog.info(0xFF00, 'YoloDetector', `解析出 ${results.length} 个目标`);
     return results.sort((a, b) => b.score - a.score);
   }
+
   release(): void {
     if (this.model !== null) {
       this.model = null;
