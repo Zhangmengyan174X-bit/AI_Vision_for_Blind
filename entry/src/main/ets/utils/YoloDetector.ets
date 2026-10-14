@@ -33,17 +33,6 @@ export interface DetectedObject {
   box: BoundingBox;
 }
 
-interface MsCpuConfig {
-  threadNum: number;
-  threadAffinityMode: number;
-  precisionMode: string;
-}
-
-interface MsContext {
-  target: string[];
-  cpu: MsCpuConfig;
-}
-
 export class YoloDetector {
   private model: mindSporeLite.Model | null = null;
   private context: common.UIAbilityContext;
@@ -60,21 +49,62 @@ export class YoloDetector {
         await this.context.resourceManager.getRawFileContent(this.MODEL_NAME);
       const modelBuffer: ArrayBuffer = rawFileContent.buffer as ArrayBuffer;
 
-      const cpuConfig: MsCpuConfig = {
+      // CPU 配置（官方类型 CpuDevice）
+      const cpuConfig: mindSporeLite.CpuDevice = {
         threadNum: 4,
-        threadAffinityMode: 1,
+        threadAffinityMode: mindSporeLite.ThreadAffinityMode.BIG_CORES_FIRST,
         precisionMode: 'enforce_fp32'
       };
 
-      const msContext: MsContext = {
-        target: ['nnrt', 'cpu'],
-        cpu: cpuConfig
-      };
+      // 枚举 NNRT 设备，找加速器（NPU）
+      let nnrtDeviceID: bigint | undefined = undefined;
+      let nnrtName: string = '';
+      try {
+        const devices = mindSporeLite.getAllNNRTDeviceDescriptions();
+        hilog.info(0xFF00, 'YoloDetector', `[NNRT] 枚举到 ${devices.length} 个设备`);
+        for (let i = 0; i < devices.length; i++) {
+          const d = devices[i];
+          const idStr: string = d.deviceID().toString();
+          const typeStr: string = d.deviceType().toString();
+          const nameStr: string = d.deviceName();
+          hilog.info(0xFF00, 'YoloDetector',
+            `[NNRT] id=${idStr}, type=${typeStr}, name=${nameStr}`);
 
-      this.model = await mindSporeLite.loadModelFromBuffer(
-        modelBuffer,
-        msContext as mindSporeLite.Context
-      );
+          if (d.deviceType() === mindSporeLite.NNRTDeviceType.NNRTDEVICE_ACCELERATOR
+            && nnrtDeviceID === undefined) {
+            nnrtDeviceID = d.deviceID();
+            nnrtName = nameStr;
+          }
+        }
+      } catch (err) {
+        const e = err as BusinessError;
+        hilog.error(0xFF00, 'YoloDetector',
+          `[NNRT] 枚举失败: code=${e.code}, message=${e.message}`);
+      }
+
+      // 组装 MsContext
+      let msContext: mindSporeLite.Context;
+      if (nnrtDeviceID !== undefined) {
+        msContext = {
+          target: ['nnrt', 'cpu'],
+          cpu: cpuConfig,
+          nnrt: {
+            deviceID: nnrtDeviceID,
+            performanceMode: mindSporeLite.PerformanceMode.PERFORMANCE_HIGH,
+            priority: mindSporeLite.Priority.PRIORITY_HIGH
+          }
+        };
+        hilog.info(0xFF00, 'YoloDetector',
+          `[NNRT] 使用 NPU + CPU 混合推理, device=${nnrtName}`);
+      } else {
+        msContext = {
+          target: ['cpu'],
+          cpu: cpuConfig
+        };
+        hilog.warn(0xFF00, 'YoloDetector', '[NNRT] 未发现加速器，回退纯 CPU');
+      }
+
+      this.model = await mindSporeLite.loadModelFromBuffer(modelBuffer, msContext);
       hilog.info(0xFF00, 'YoloDetector', '模型加载成功');
       return true;
     } catch (error) {
