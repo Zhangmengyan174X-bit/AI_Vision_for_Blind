@@ -209,6 +209,16 @@ export class YoloDetector {
 
     const outputData = new Float32Array(rawData);
     hilog.info(0xFF00, 'YoloDetector', `输出数据长度: ${outputData.length}`);
+    let outMin = 1e9;
+    let outMax = -1e9;
+    for (let i = 0; i < outputData.length; i++) {
+      const v = outputData[i];
+      if (v < outMin) outMin = v;
+      if (v > outMax) outMax = v;
+    }
+    hilog.info(0xFF00, 'YoloDetector',
+      `输出统计: min=${outMin.toFixed(4)}, max=${outMax.toFixed(4)}`);
+
 
     const results: DetectedObject[] = [];
     const numClasses = 80;
