@@ -151,6 +151,23 @@ export class YoloDetector {
       }
 
       hilog.info(0xFF00, 'YoloDetector', '准备 setData');
+
+
+      let sum = 0;
+      let minV = 1e9;
+      let maxV = -1e9;
+      for (let i = 0; i < inputBuffer.length; i++) {
+        const v = inputBuffer[i];
+        sum += v;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+      const mean = sum / inputBuffer.length;
+      hilog.info(0xFF00, 'YoloDetector',
+        `输入统计: min=${minV.toFixed(4)}, max=${maxV.toFixed(4)}, mean=${mean.toFixed(4)}`);
+
+
+
       inputTensor.setData(inputBuffer.buffer);
       hilog.info(0xFF00, 'YoloDetector', 'setData 成功，准备 predict');
 
@@ -209,7 +226,7 @@ export class YoloDetector {
         }
       }
 
-      if (maxClassScore < 0.5) continue;
+      if (maxClassScore < 0.25) continue;
 
       const cx = outputData[0 * numBoxes + i] / this.INPUT_SIZE;
       const cy = outputData[1 * numBoxes + i] / this.INPUT_SIZE;
