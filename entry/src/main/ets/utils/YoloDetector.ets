@@ -209,6 +209,12 @@ export class YoloDetector {
 
     const outputData = new Float32Array(rawData);
     hilog.info(0xFF00, 'YoloDetector', `输出数据长度: ${outputData.length}`);
+
+    const results: DetectedObject[] = [];
+    const numClasses = 80;
+    const numBoxes = 8400;
+
+    // 全量输出统计
     let outMin = 1e9;
     let outMax = -1e9;
     for (let i = 0; i < outputData.length; i++) {
@@ -219,13 +225,32 @@ export class YoloDetector {
     hilog.info(0xFF00, 'YoloDetector',
       `输出统计: min=${outMin.toFixed(4)}, max=${outMax.toFixed(4)}`);
 
+    // 打印前 8 行和后 3 行的数值范围
+    for (let r = 0; r < 8; r++) {
+      let rowMin = 1e9;
+      let rowMax = -1e9;
+      for (let i = 0; i < numBoxes; i++) {
+        const v = outputData[r * numBoxes + i];
+        if (v < rowMin) rowMin = v;
+        if (v > rowMax) rowMax = v;
+      }
+      hilog.info(0xFF00, 'YoloDetector',
+        `行[${r}]: min=${rowMin.toFixed(3)}, max=${rowMax.toFixed(3)}`);
+    }
+    for (let r = 81; r < 84; r++) {
+      let rowMin = 1e9;
+      let rowMax = -1e9;
+      for (let i = 0; i < numBoxes; i++) {
+        const v = outputData[r * numBoxes + i];
+        if (v < rowMin) rowMin = v;
+        if (v > rowMax) rowMax = v;
+      }
+      hilog.info(0xFF00, 'YoloDetector',
+        `行[${r}]: min=${rowMin.toFixed(3)}, max=${rowMax.toFixed(3)}`);
+    }
 
-    const results: DetectedObject[] = [];
-    const numClasses = 80;
-    const numBoxes = 8400;
-
+    // 主循环：遍历 8400 个框
     for (let i = 0; i < numBoxes; i++) {
-      // YOLOv8: 第 4 行是类别置信度最大的那个
       let maxClassScore = 0;
       let maxClassId = -1;
       for (let c = 0; c < numClasses; c++) {
@@ -261,7 +286,6 @@ export class YoloDetector {
     hilog.info(0xFF00, 'YoloDetector', `解析出 ${results.length} 个目标`);
     return results.sort((a, b) => b.score - a.score);
   }
-
   release(): void {
     if (this.model !== null) {
       this.model = null;
