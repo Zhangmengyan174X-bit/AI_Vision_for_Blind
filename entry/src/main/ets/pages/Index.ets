@@ -27,21 +27,17 @@ struct Index {
   private detectInterval: number = 1000;
   private isDetecting: boolean = false;
 
-  // YOLO 检测器
   private yoloDetector: YoloDetector | null = null;
 
   @State isPreviewing: boolean = false;
 
-  // 张雅萱后续在这里做优先级判定 + 去重 + TTS
   onObjectDetected(objects: DetectedObject[]): void {
     if (objects.length === 0) {
       return;
     }
 
-    // 暂时取置信度最高的播报（YoloDetector 已经按 score 降序排好）
     const best = objects[0];
 
-    // 简易去重：同一标签不重复播报
     if (best.label === this.lastSpokenLabel) {
       return;
     }
@@ -53,12 +49,10 @@ struct Index {
   aboutToAppear(): void {
     SpeechManager.getInstance().init();
 
-    // 先查 NNRT 设备枚举（用于判断 NPU 路径是否可用）
     this.inspectNNRT();
 
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
 
-    // 加载 YOLO 模型
     this.yoloDetector = new YoloDetector(context);
     this.yoloDetector.loadModel().then((success: boolean) => {
       if (success) {
@@ -75,10 +69,6 @@ struct Index {
     });
   }
 
-  /**
-   * 枚举当前环境暴露的 NNRT 设备，判断 NPU 推理路径是否可用。
-   * 若该方法在当前 SDK 中不存在，编译会报错，届时删掉此方法及调用即可。
-   */
   private inspectNNRT(): void {
     try {
       const devices = mindSporeLite.getAllNNRTDeviceDescriptions();
@@ -130,14 +120,23 @@ struct Index {
       const outputCapability = this.cameraManager.getSupportedOutputCapability(
         backCamera, camera.SceneMode.NORMAL_PHOTO
       );
-      const previewProfile = outputCapability.previewProfiles[0];
+
+      // 选最大的预览尺寸
+      let previewProfile = outputCapability.previewProfiles[0];
+      for (let i = 1; i < outputCapability.previewProfiles.length; i++) {
+        const p = outputCapability.previewProfiles[i];
+        if (p.size.width * p.size.height > previewProfile.size.width * previewProfile.size.height) {
+          previewProfile = p;
+        }
+      }
+      console.info(`选中的预览尺寸: ${previewProfile.size.width}x${previewProfile.size.height}`);
 
       // 第一路：给 XComponent 显示
       this.previewOutput = this.cameraManager.createPreviewOutput(
         previewProfile, this.previewSurfaceId
       );
 
-      // ========== 第二路：给 ImageReceiver 抽帧 ==========
+      // 第二路：给 ImageReceiver 抽帧
       const receiverSize: image.Size = {
         width: previewProfile.size.width,
         height: previewProfile.size.height
@@ -233,18 +232,15 @@ struct Index {
     let pixelMap: image.PixelMap | null = null;
 
     try {
-      // 1. 拿原始字节
       const component = await img.getComponent(image.ComponentType.JPEG);
       if (!component || !component.byteBuffer) {
         console.error('获取图像数据失败');
         return;
       }
 
-      // 2. 真实宽高
       const realWidth = img.size.width;
       const realHeight = img.size.height;
 
-      // 3. 解码成 PixelMap
       const sourceOptions: image.SourceOptions = {
         sourcePixelFormat: image.PixelMapFormat.NV21,
         sourceSize: {
@@ -262,14 +258,12 @@ struct Index {
 
       pixelMap = await imageSource.createPixelMap();
 
-      // 4. 预处理成 YOLO 需要的 Float32Array
       const inputData: Float32Array = await this.preprocessImage(pixelMap);
       if (!inputData || inputData.length === 0) {
         console.error('preprocessImage 返回空数据');
         return;
       }
 
-      // 5. YOLO 推理
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
 
       if (objects.length > 0) {
@@ -294,10 +288,6 @@ struct Index {
     }
   }
 
-  /**
-   * 把 PixelMap 预处理成 YOLO 需要的输入：
-   * 1×3×640×640 的 Float32Array，归一化到 0~1，CHW 顺序
-   */
   private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
     const INPUT_SIZE = 640;
     const defaultResult = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
@@ -321,11 +311,12 @@ struct Index {
 
       console.info(`RGBA 字节数: ${rgba.length}, 期望: ${INPUT_SIZE * INPUT_SIZE * 4}`);
 
+      // NHWC 布局
       const float32 = new Float32Array(1 * INPUT_SIZE * INPUT_SIZE * 3);
       for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
-        float32[i * 3] = rgba[i * 4] / 255.0;         // R
-        float32[i * 3 + 1] = rgba[i * 4 + 1] / 255.0; // G
-        float32[i * 3 + 2] = rgba[i * 4 + 2] / 255.0; // B
+        float32[i * 3] = rgba[i * 4] / 255.0;
+        float32[i * 3 + 1] = rgba[i * 4 + 1] / 255.0;
+        float32[i * 3 + 2] = rgba[i * 4 + 2] / 255.0;
       }
       return float32;
     } catch (err) {
