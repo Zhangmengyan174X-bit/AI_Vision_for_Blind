@@ -2,12 +2,13 @@ import { camera } from '@kit.CameraKit';
 import { image } from '@kit.ImageKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { mindSporeLite } from '@kit.MindSporeLiteKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
 import { SpeechManager } from '../utils/SpeechManager';
 import { RecognitionPage } from '../ui/pages/RecognitionPage';
 import { SettingsPage } from '../ui/pages/SettingsPage';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
-import { mindSporeLite } from '@kit.MindSporeLiteKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 @Entry
 @Component
@@ -141,6 +142,8 @@ struct Index {
         width: previewProfile.size.width,
         height: previewProfile.size.height
       };
+
+      hilog.info(0xFF00, 'Index', `抽帧尺寸: ${previewProfile.size.width}x${previewProfile.size.height}`);
       this.imageReceiver = image.createImageReceiver(
         receiverSize, image.ImageFormat.JPEG, 8
       );

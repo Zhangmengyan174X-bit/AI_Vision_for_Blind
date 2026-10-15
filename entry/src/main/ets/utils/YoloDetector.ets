@@ -132,6 +132,24 @@ export class YoloDetector {
     const results: DetectedObject[] = [];
     const numClasses = 80;
     const numBoxes = 8400;
+    let outMin = 1e9;
+    let outMax = -1e9;
+    for (let i = 0; i < outputData.length; i++) {
+      const v = outputData[i];
+      if (v < outMin) outMin = v;
+      if (v > outMax) outMax = v;
+    }
+    hilog.info(0xFF00, 'YoloDetector',
+      `输出统计: min=${outMin.toFixed(4)}, max=${outMax.toFixed(4)}`);
+
+    let classMax = 0;
+    for (let c = 0; c < numClasses; c++) {
+      for (let i = 0; i < numBoxes; i++) {
+        const v = outputData[(4 + c) * numBoxes + i];
+        if (v > classMax) classMax = v;
+      }
+    }
+    hilog.info(0xFF00, 'YoloDetector', `类别分数最大值: ${classMax.toFixed(4)}`);
 
     for (let i = 0; i < numBoxes; i++) {
       let maxClassScore = 0;
