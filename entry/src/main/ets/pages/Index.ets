@@ -321,12 +321,11 @@ struct Index {
 
       console.info(`RGBA 字节数: ${rgba.length}, 期望: ${INPUT_SIZE * INPUT_SIZE * 4}`);
 
-      const float32 = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
-      const channelSize = INPUT_SIZE * INPUT_SIZE;
-      for (let i = 0; i < channelSize; i++) {
-        float32[i] = rgba[i * 4] / 255.0;
-        float32[channelSize + i] = rgba[i * 4 + 1] / 255.0;
-        float32[channelSize * 2 + i] = rgba[i * 4 + 2] / 255.0;
+      const float32 = new Float32Array(1 * INPUT_SIZE * INPUT_SIZE * 3);
+      for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
+        float32[i * 3] = rgba[i * 4] / 255.0;         // R
+        float32[i * 3 + 1] = rgba[i * 4 + 1] / 255.0; // G
+        float32[i * 3 + 2] = rgba[i * 4 + 2] / 255.0; // B
       }
       return float32;
     } catch (err) {
