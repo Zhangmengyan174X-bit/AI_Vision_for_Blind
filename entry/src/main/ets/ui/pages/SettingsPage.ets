@@ -1,8 +1,10 @@
 @Component
 export struct SettingsPage {
+  @Consume('pageStack') pageStack: NavPathStack
+
   build() {
     Column() {
-      Text('声视')
+      Text('探步')
         .fontSize(34)
         .fontWeight(FontWeight.Bold)
         .fontColor('#1F2933')
@@ -23,6 +25,9 @@ export struct SettingsPage {
         .fontColor(Color.White)
         .backgroundColor('#356D73')
         .borderRadius(24)
+        .onClick(() => {
+          this.pageStack.pushPath({ name: 'CameraPage' })
+        })
         .margin({ bottom: 20 })
 
       Button('使用说明')
@@ -32,6 +37,9 @@ export struct SettingsPage {
         .fontColor('#356D73')
         .backgroundColor($r('sys.color.comp_background_list_card'))
         .borderRadius(20)
+        .onClick(() => {
+          this.pageStack.clear()
+        })
         .margin({ bottom: 20 })
 
       Button('设置')
