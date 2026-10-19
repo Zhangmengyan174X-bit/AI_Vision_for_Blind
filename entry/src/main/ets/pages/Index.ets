@@ -9,6 +9,7 @@ import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
+import { sensor } from '@kit.SensorServiceKit'; // 引入传感器
 
 @Entry
 @Component
@@ -29,32 +30,127 @@ struct Index {
   private imageReceiver: image.ImageReceiver | null = null;
   private receiverSurfaceId: string = '';
   private lastDetectTime: number = 0;
-  private lastSpokenLabel: string = '';
-  private detectInterval: number = 1000;
+  private detectInterval: number = 800; // 缩短到 800ms，让反应更灵敏
   private isDetecting: boolean = false;
   private yoloDetector: YoloDetector | null = null;
+  // 记录陀螺仪的回调函数，防止内存泄漏
+  private sensorCallback: ((data: sensor.GyroscopeResponse) => void) | null = null;
   @State isPreviewing: boolean = false;
 
+  // ================= 智能避障大脑状态变量 =================
+  private isPhoneStable: boolean = true;
+  private lastObjectState: Map<string, Map<string, number>> = new Map();
+  private lastSpokenText: string = '';
+  private lastSpeakTime: number = 0;
+
+  // ================= 核心：优先级、防抖、预警、远近 =================
   onObjectDetected(objects: DetectedObject[]): void {
-    if (objects.length === 0) {
-      return;
+    if (objects.length === 0) return;
+
+    const now = Date.now();
+    let highestThreatObj: DetectedObject | null = null;
+    let highestThreatScore = -1;
+    let finalSpeech = '';
+    let isDanger = false;
+
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
+      const currentArea = obj.box.width * obj.box.height;
+      const centerX = obj.box.left + obj.box.width / 2;
+
+      // 1. 计算方位
+      let positionStr = '正前方';
+      if (centerX < 0.33) positionStr = '左前方';
+      else if (centerX > 0.67) positionStr = '右前方';
+
+      // 2. 基础威胁分：面积越大越危险
+      let threatScore = currentArea * 100;
+      let objIsDanger = false;
+      let statusStr = '';
+
+      // 3. 距离判断 (面积大于 0.15 视为近处，否则远处)
+      const distanceStr = currentArea > 0.15 ? '' : '远处';
+
+      // 4. 判断暴增 (紧急危险)。只有在手机平稳时才算！
+      const lastState = this.lastObjectState.get(obj.label);
+      if (lastState && this.isPhoneStable) {
+        const timeDiff = now - (lastState.get('time') || 0);
+        if (timeDiff > 0 && timeDiff < 600) {
+          const lastArea = lastState.get('area') || 0.01;
+          const areaGrowthRate = (currentArea - lastArea) / lastArea;
+          if (areaGrowthRate > 0.5) {
+            threatScore += 200;
+            objIsDanger = true;
+            statusStr = '有快速冲过来的';
+          } else if (areaGrowthRate > 0.1) {
+            threatScore += 50;
+            statusStr = '有正在靠近的';
+          }
+        }
+      }
+
+      // 5. 类别权重 (人和车最危险)
+      const isVehicle = ['汽车', '自行车', '摩托车', '公交车', '卡车'].includes(obj.label);
+      if (obj.label === '人' || isVehicle) {
+        threatScore += 30;
+      }
+
+      // 更新状态
+      const stateMap = new Map<string, number>();
+      stateMap.set('area', currentArea);
+      stateMap.set('time', now);
+      this.lastObjectState.set(obj.label, stateMap);
+
+      // 6. 挑选最高威胁
+      if (threatScore > highestThreatScore) {
+        highestThreatScore = threatScore;
+        highestThreatObj = obj;
+
+        // 计算躲避方向
+        let dodgeDir = '停步';
+        if (centerX < 0.33) dodgeDir = '向右躲';
+        else if (centerX > 0.67) dodgeDir = '向左躲';
+
+        // 拼装文案
+        if (objIsDanger) {
+          finalSpeech = `警告！${positionStr}，${dodgeDir}！${statusStr}${obj.label}`;
+          isDanger = true;
+        } else if (statusStr) {
+          finalSpeech = `${distanceStr}${positionStr}${statusStr}${obj.label}`;
+        } else {
+          finalSpeech = `${distanceStr}${positionStr}有${obj.label}`;
+        }
+      }
     }
 
-    const best = objects[0];
+    // 7. 最终播报与防抖
+    if (highestThreatObj) {
+      // 防抖：如果内容一样，且距离上次播报不到 2 秒，就不播了
+      if (finalSpeech === this.lastSpokenText && (now - this.lastSpeakTime < 2000)) {
+        return;
+      }
 
-    if (best.label === this.lastSpokenLabel) {
-      return;
+      console.info(`[TTS播报] ${finalSpeech} (危险状态: ${isDanger})`);
+
+      // 接入 TTS
+      if (isDanger) {
+        // 如果你有警告音，可以在这里调用
+        // SpeechManager.getInstance().playWarningBeep();
+        SpeechManager.getInstance().speak(finalSpeech);
+      } else {
+        SpeechManager.getInstance().speak(finalSpeech);
+      }
+
+      this.lastSpokenText = finalSpeech;
+      this.lastSpeakTime = now;
     }
-    this.lastSpokenLabel = best.label;
-
-    SpeechManager.getInstance().speak(`前方有${best.label}`);
   }
 
   aboutToAppear(): void {
     SpeechManager.getInstance().init();
     this.startWelcomeAnimation();
-
     this.inspectNNRT();
+    this.initGyroscope(); // 启动陀螺仪
 
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
 
@@ -88,6 +184,24 @@ struct Index {
     }, 700)
   }
 
+  // ================= 传感器防抖逻辑 =================
+  private initGyroscope(): void {
+    try {
+      this.sensorCallback = (data: sensor.GyroscopeResponse) => {
+        const angularVelocity = Math.sqrt(data.x * data.x + data.y * data.y + data.z * data.z);
+        if (angularVelocity > 1.0) {
+          this.isPhoneStable = false;
+        } else {
+          this.isPhoneStable = true;
+        }
+      };
+      sensor.on(sensor.SensorId.GYROSCOPE, this.sensorCallback, { interval: 100000000 });
+      console.info('陀螺仪传感器已启动');
+    } catch (error) {
+      console.error('陀螺仪启动失败: ' + JSON.stringify(error));
+    }
+  }
+
   private inspectNNRT(): void {
     try {
       const devices = mindSporeLite.getAllNNRTDeviceDescriptions();
@@ -111,6 +225,9 @@ struct Index {
     if (this.yoloDetector) {
       this.yoloDetector.release();
       this.yoloDetector = null;
+    }
+    if (this.sensorCallback) {
+      sensor.off(sensor.SensorId.GYROSCOPE, this.sensorCallback);
     }
   }
 
@@ -141,7 +258,6 @@ struct Index {
         backCamera, camera.SceneMode.NORMAL_PHOTO
       );
 
-      // 选最大的预览尺寸
       let previewProfile = outputCapability.previewProfiles[0];
       for (let i = 1; i < outputCapability.previewProfiles.length; i++) {
         const p = outputCapability.previewProfiles[i];
@@ -151,12 +267,10 @@ struct Index {
       }
       console.info(`选中的预览尺寸: ${previewProfile.size.width}x${previewProfile.size.height}`);
 
-      // 第一路：给 XComponent 显示
       this.previewOutput = this.cameraManager.createPreviewOutput(
         previewProfile, this.previewSurfaceId
       );
 
-      // 第二路：给 ImageReceiver 抽帧
       const receiverSize: image.Size = {
         width: previewProfile.size.width,
         height: previewProfile.size.height
@@ -345,6 +459,7 @@ struct Index {
       return defaultResult;
     }
   }
+
   // ============ 页面跳转控制 ============
   private enterRecognition(): void {
     this.pageStack.pushPath({ name: 'CameraPage' })
