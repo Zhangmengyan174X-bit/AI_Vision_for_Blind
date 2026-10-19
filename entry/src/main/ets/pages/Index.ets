@@ -10,6 +10,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit'; // 引入传感器
+import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
 
 @Entry
 @Component
@@ -133,7 +134,7 @@ struct Index {
       console.info(`[TTS播报] ${finalSpeech} (危险状态: ${isDanger})`);
 
       SpeechManager.getInstance().speak(finalSpeech);
-      
+
       // 接入 TTS
       if (isDanger) {
         // 如果你有警告音，可以在这里调用
@@ -476,6 +477,9 @@ struct Index {
     this.pageStack.pop()
   }
 
+  // ============================================================
+  //  相机识别页：深色悬浮层 + 底部渐变压暗，保证任何画面下可读
+  // ============================================================
   @Builder
   buildCameraPage() {
     NavDestination() {
@@ -495,34 +499,52 @@ struct Index {
           })
 
         Column() {
+          // 顶部状态胶囊：墨底 + 亮青状态点
           Row() {
-            Text('● 正在识别中')
-              .fontSize(16)
-              .fontColor(Color.White)
+            Circle()
+              .width(10)
+              .height(10)
+              .backgroundColor(AppColors.sageLight)
+            Text('正在识别中')
+              .fontSize(15)
+              .fontColor(AppColors.white)
+              .margin({ left: 8 })
           }
-          .backgroundColor('rgba(0, 0, 0, 0.5)')
-          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .backgroundColor(AppColors.overlay)
+          .padding({ left: 16, right: 18, top: 9, bottom: 9 })
           .borderRadius(20)
-          .margin({ top: 40 })
+          .margin({ top: 54 })
 
           Blank()
 
-          Button('退出识别')
-            .width('80%')
-            .height(70)
-            .fontSize(24)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(Color.White)
-            .backgroundColor('rgba(53, 109, 115, 0.85)')
-            .borderRadius(35)
-            .onClick(() => {
-              this.pageStack.replacePath({ name: 'Settings' });
-            })
-            .margin({ bottom: 50 })
+          // 底部：渐变压暗 + 大触控退出按钮
+          Column() {
+            Button('退出识别')
+              .width('100%')
+              .height(72)
+              .fontSize(24)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.white)
+              .backgroundColor(AppColors.overlayDeep)
+              .borderRadius(36)
+              .border({ width: 1, color: 'rgba(255, 255, 255, 0.22)' })
+              .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.28)', offsetX: 0, offsetY: 8 })
+              .onClick(() => {
+                this.pageStack.replacePath({ name: 'Settings' });
+              })
+          }
+          .width('100%')
+          .padding({ left: 24, right: 24, top: 72, bottom: 34 })
+          .linearGradient({
+            angle: 180,
+            colors: [
+              ['rgba(48, 54, 58, 0)', 0.0],
+              ['rgba(48, 54, 58, 0.55)', 1.0]
+            ]
+          })
         }
         .width('100%')
         .height('100%')
-        .padding({ left: 20, right: 20 })
       }
       .width('100%')
       .height('100%')
@@ -552,158 +574,368 @@ struct Index {
     }
   }
 
+  // ============================================================
+  //  欢迎页：渐变背景 + 装饰圆 + 呼吸圆 + 入场动效
+  // ============================================================
   @Builder
   buildWelcomePage() {
     NavDestination() {
-      Column() {
+      Stack() {
+        // 背景装饰圆（极低透明度，增加层次）
+        Circle()
+          .width(280)
+          .height(280)
+          .backgroundColor(AppColors.sage)
+          .opacity(0.07)
+          .position({ x: '-25%', y: '-8%' })
+        Circle()
+          .width(220)
+          .height(220)
+          .backgroundColor(AppColors.sageDeep)
+          .opacity(0.06)
+          .position({ x: '72%', y: '76%' })
+
         Column() {
-          Text('探步').fontSize(36).fontWeight(FontWeight.Bold).fontColor('#30363A')
-          Text('智能视觉辅助').fontSize(18).fontColor('#667085').margin({ top: 8 })
-        }
+          Column() {
+            Text('探步')
+              .fontSize(40)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.ink)
+              .letterSpacing(4)
+            Text('智能视觉辅助')
+              .fontSize(16)
+              .fontColor(AppColors.stone)
+              .letterSpacing(6)
+              .margin({ top: 10 })
+          }
+          .margin({ top: 52 })
 
-        Blank()
+          Blank()
 
-        BreathingCircle()
+          BreathingCircle()
 
-        Column() {
-          Text('轻触屏幕任意位置').fontSize(27).fontWeight(FontWeight.Medium).fontColor('#30363A')
-          Text('开始识别').fontSize(24).fontColor('#63918A').fontWeight(FontWeight.Bold).margin({ top: 8 })
-        }
-        .opacity(this.promptOpacity)
-        .translate({ y: this.promptOffset })
-        .margin({ top: 24 })
+          Blank()
 
-        Text('环境感知 · 语音辅助').fontSize(16).fontColor('#667085').opacity(this.promptOpacity).margin({ top: 28 })
-        Blank()
-        Text('轻触任意位置进入识别模式')
-          .fontSize(15)
-          .fontColor('#98A2B3')
+          Column() {
+            Text('轻触屏幕任意位置')
+              .fontSize(24)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(AppColors.ink)
+            Text('开始识别')
+              .fontSize(28)
+              .fontColor(AppColors.sage)
+              .fontWeight(FontWeight.Bold)
+              .margin({ top: 10 })
+          }
           .opacity(this.promptOpacity)
-          .margin({ bottom: 30 })
+          .translate({ y: this.promptOffset })
+
+          // 底部能力说明胶囊
+          Row() {
+            Circle()
+              .width(8)
+              .height(8)
+              .backgroundColor(AppColors.sage)
+            Text('环境感知 · 语音辅助')
+              .fontSize(14)
+              .fontColor(AppColors.stone)
+              .margin({ left: 8 })
+          }
+          .padding({ left: 18, right: 18, top: 10, bottom: 10 })
+          .backgroundColor('rgba(246, 247, 244, 0.65)')
+          .borderRadius(22)
+          .opacity(this.promptOpacity)
+          .margin({ top: 30, bottom: 44 })
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ left: 28, right: 28 })
+        .onClick(() => {
+          this.pageStack.pushPath({ name: 'CameraPage' })
+        })
+        .accessibilityText('轻触屏幕任意位置，开始识别')
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#D5D9D5')
-      .padding({
-        left: 28,
-        right: 28,
-        top: 36,
-        bottom: 24
-      })
-      .justifyContent(FlexAlign.Center)
-      .onClick(() => {
-        this.pageStack.pushPath({ name: 'CameraPage' })
-      })
-      .accessibilityText('轻触屏幕任意位置，开始识别')
+      .linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }
     .hideTitleBar(true)
   }
 
+  // ============================================================
+  //  设置与帮助首页：统一卡片语言（暖白卡 + 柔和投影）
+  // ============================================================
   @Builder
   buildSettingsPage() {
     NavDestination() {
       Scroll() {
         Column() {
+          // 顶部品牌区
           Row() {
             Column() {
-              Text('探步').fontSize(34).fontWeight(FontWeight.Bold).fontColor('#30363A')
-              Text('设置与帮助').fontSize(17).fontColor('#667085').margin({ top: 6 })
+              Text('探步')
+                .fontSize(34)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(AppColors.ink)
+                .letterSpacing(2)
+              Text('设置与帮助')
+                .fontSize(16)
+                .fontColor(AppColors.stone)
+                .margin({ top: 6 })
             }
-            Blank()
-          }
-          .width('100%').margin({ top: 38 })
+            .alignItems(HorizontalAlign.Start)
 
+            Blank()
+
+            // 品牌标识圆
+            Stack() {
+              Circle()
+                .width(52)
+                .height(52)
+                .backgroundColor(AppColors.sage)
+              Text('探')
+                .fontSize(22)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(AppColors.white)
+            }
+            .shadow({ radius: 14, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 6 })
+          }
+          .width('100%')
+          .margin({ top: 44 })
+
+          // 主行动卡：开始识别
           Column() {
-            Text('开始使用').fontSize(16).fontColor('#667085')
+            Row() {
+              Text('开始使用')
+                .fontSize(13)
+                .fontColor(AppColors.stone)
+                .letterSpacing(3)
+              Blank()
+            }
+            .width('100%')
+
             Button('开始识别')
-              .width('100%').height(78).fontSize(27).fontWeight(FontWeight.Bold)
-              .fontColor(Color.White).backgroundColor('#63918A').borderRadius(24)
-              .margin({ top: 14 })
+              .width('100%')
+              .height(76)
+              .fontSize(26)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.white)
+              .backgroundColor(AppColors.sage)
+              .borderRadius(22)
+              .shadow(AppColors.shadowButton)
+              .margin({ top: 16 })
               .onClick(() => { this.enterRecognition() })
               .accessibilityText('开始识别')
           }
-          .width('100%').padding(22)
-          .backgroundColor($r('sys.color.comp_background_list_card'))
-          .borderRadius(26).margin({ top: 34 })
+          .width('100%')
+          .padding(22)
+          .backgroundColor(AppColors.card)
+          .borderRadius(24)
+          .shadow(AppColors.shadowCard)
+          .margin({ top: 32 })
 
+          // 入口卡：使用说明
+          this.buildEntryCard('说', '使用说明', '了解如何开始识别、退出识别以及使用语音辅助', () => { this.openHelp() })
+
+          // 入口卡：语音设置
+          this.buildEntryCard('语', '语音设置', `当前语速：${this.speechSpeed}`, () => { this.openVoiceSettings() })
+
+          // 无障碍能力卡（浅青底）
           Column() {
             Row() {
-              Text('使用说明').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
+              Text('无障碍设计')
+                .fontSize(19)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(AppColors.ink)
               Blank()
-              Text('›').fontSize(30).fontColor('#667085')
-            }.width('100%')
-            Text('了解如何开始识别、退出识别以及使用语音辅助').fontSize(15).fontColor('#667085').margin({ top: 10 })
-          }
-          .width('100%').padding(22)
-          .backgroundColor($r('sys.color.comp_background_list_card'))
-          .borderRadius(24).margin({ top: 18 })
-          .onClick(() => { this.openHelp() })
+              Text('已启用')
+                .fontSize(13)
+                .fontColor(AppColors.sageDeep)
+                .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+                .backgroundColor('rgba(99, 145, 138, 0.14)')
+                .borderRadius(12)
+            }
+            .width('100%')
 
-          Column() {
+            Text('大触控区域 · 语音反馈 · 振动提示')
+              .fontSize(15)
+              .fontColor(AppColors.stone)
+              .margin({ top: 10 })
+
+            Divider()
+              .strokeWidth(0.5)
+              .color(AppColors.line)
+              .margin({ top: 16, bottom: 14 })
+
             Row() {
-              Text('语音设置').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
+              Text(this.vibrationEnabled ? '振动提示：开启' : '振动提示：关闭')
+                .fontSize(15)
+                .fontColor(AppColors.sageDeep)
               Blank()
-              Text('›').fontSize(30).fontColor('#667085')
-            }.width('100%')
-            Text(`当前语速：${this.speechSpeed}`).fontSize(15).fontColor('#667085').margin({ top: 10 })
+              Text('点击设置')
+                .fontSize(14)
+                .fontColor(AppColors.mist)
+            }
+            .width('100%')
+            .onClick(() => { this.openVoiceSettings() })
           }
-          .width('100%').padding(22)
-          .backgroundColor($r('sys.color.comp_background_list_card'))
-          .borderRadius(24).margin({ top: 18 })
-          .onClick(() => { this.openVoiceSettings() })
+          .width('100%')
+          .padding(22)
+          .backgroundColor(AppColors.sageSoft)
+          .borderRadius(24)
+          .margin({ top: 18 })
 
+          // 页脚
           Column() {
-            Text('无障碍设计').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
-            Text('大触控区域 · 语音反馈 · 振动提示').fontSize(15).fontColor('#667085').margin({ top: 10 })
-            Row() {
-              Text(this.vibrationEnabled ? '振动提示：开启' : '振动提示：关闭').fontSize(16).fontColor('#63918A')
-              Blank()
-              Text('点击设置').fontSize(15).fontColor('#98A2B3')
-            }.width('100%').margin({ top: 18 })
+            Text('探步')
+              .fontSize(22)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.sage)
+              .letterSpacing(2)
+            Text('看见环境，听见世界')
+              .fontSize(14)
+              .fontColor(AppColors.mist)
+              .margin({ top: 6 })
           }
-          .width('100%').padding(22).backgroundColor('#E8F1EF').borderRadius(24).margin({ top: 18 })
-
-          Column() {
-            Text('探步').fontSize(22).fontWeight(FontWeight.Bold).fontColor('#63918A')
-            Text('看见环境，听见世界').fontSize(14).fontColor('#98A2B3').margin({ top: 6 })
-          }.margin({ top: 34, bottom: 36 })
+          .margin({ top: 36, bottom: 40 })
         }
-        .width('100%').padding({ left: 24, right: 24 })
+        .width('100%')
+        .padding({ left: 24, right: 24 })
       }
-      .width('100%').height('100%').backgroundColor('#D5D9D5')
+      .width('100%')
+      .height('100%')
+      .linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }
     .hideTitleBar(true)
   }
 
+  /** 通用入口卡：左侧首字徽标 + 标题/副标题 + 箭头 */
+  @Builder
+  buildEntryCard(mark: string, title: string, subtitle: string, onTap: () => void) {
+    Row() {
+      Stack() {
+        Circle()
+          .width(48)
+          .height(48)
+          .backgroundColor(AppColors.sageSoft)
+        Text(mark)
+          .fontSize(19)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.sageDeep)
+      }
+
+      Column() {
+        Text(title)
+          .fontSize(19)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.ink)
+        Text(subtitle)
+          .fontSize(14)
+          .fontColor(AppColors.stone)
+          .margin({ top: 6 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 16 })
+
+      Text('›')
+        .fontSize(28)
+        .fontColor(AppColors.mist)
+    }
+    .width('100%')
+    .padding(20)
+    .backgroundColor(AppColors.card)
+    .borderRadius(24)
+    .shadow(AppColors.shadowCard)
+    .margin({ top: 18 })
+    .onClick(onTap)
+  }
+
+  // ============================================================
+  //  使用说明页
+  // ============================================================
   @Builder
   buildHelpPage() {
     NavDestination() {
       Scroll() {
         Column() {
+          // 返回栏
           Row() {
-            Text('‹').fontSize(42).fontColor('#63918A')
-              .onClick(() => { this.backToSettings() })
-            Text('使用说明').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#30363A').margin({ left: 10 })
+            Stack() {
+              Circle()
+                .width(44)
+                .height(44)
+                .backgroundColor(AppColors.card)
+              Text('‹')
+                .fontSize(26)
+                .fontColor(AppColors.ink)
+                .margin({ bottom: 4 })
+            }
+            .shadow(AppColors.shadowCard)
+            .onClick(() => { this.backToSettings() })
+
+            Text('使用说明')
+              .fontSize(26)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.ink)
+              .margin({ left: 14 })
             Blank()
-          }.width('100%').margin({ top: 32 })
+          }
+          .width('100%')
+          .margin({ top: 40 })
 
-          Text('简单三步开始使用').fontSize(18).fontColor('#667085').width('100%').margin({ top: 10, bottom: 24 })
+          Text('简单三步开始使用')
+            .fontSize(16)
+            .fontColor(AppColors.stone)
+            .width('100%')
+            .margin({ top: 12, bottom: 24 })
 
-          this.buildHelpCard('01', '打开应用', '启动声视后，应用会进入待机模式。')
+          this.buildHelpCard('01', '打开应用', '启动探步后，应用会进入待机模式。')
           this.buildHelpCard('02', '轻触任意位置', '屏幕任意位置都可以触碰，不需要寻找按钮。')
           this.buildHelpCard('03', '听取语音提示', '应用会识别环境并通过语音告诉你周围的目标。')
 
+          // 退出说明卡
           Column() {
-            Text('退出识别').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
-            Text('在识别页面点击“退出识别”，返回设置与帮助页面。').fontSize(16).fontColor('#667085').margin({ top: 8 })
+            Row() {
+              Stack() {
+                Circle()
+                  .width(48)
+                  .height(48)
+                  .backgroundColor(AppColors.sageSoft)
+                Text('退')
+                  .fontSize(19)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(AppColors.sageDeep)
+              }
+              Column() {
+                Text('退出识别')
+                  .fontSize(19)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(AppColors.ink)
+                Text('在识别页面点击“退出识别”，返回设置与帮助页面。')
+                  .fontSize(15)
+                  .fontColor(AppColors.stone)
+                  .margin({ top: 7 })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              .margin({ left: 16 })
+            }
+            .width('100%')
           }
-          .width('100%').padding(22)
-          .backgroundColor($r('sys.color.comp_background_list_card'))
-          .borderRadius(24).margin({ top: 16, bottom: 36 })
+          .width('100%')
+          .padding(20)
+          .backgroundColor(AppColors.card)
+          .borderRadius(24)
+          .shadow(AppColors.shadowCard)
+          .margin({ top: 4, bottom: 40 })
         }
-        .width('100%').padding({ left: 24, right: 24 })
+        .width('100%')
+        .padding({ left: 24, right: 24 })
       }
-      .width('100%').height('100%').backgroundColor('#D5D9D5')
+      .width('100%')
+      .height('100%')
+      .linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }
     .hideTitleBar(true)
   }
@@ -713,92 +945,171 @@ struct Index {
     Row() {
       Stack() {
         if (deviceInfo.apiAvailable('26.0.0')) {
-          Circle().width(52).height(52).fill('#E8F1EF')
+          Circle().width(52).height(52).fill(AppColors.sageSoft)
         } else {
-          Circle().width(52).height(52).backgroundColor('#E8F1EF')
+          Circle().width(52).height(52).backgroundColor(AppColors.sageSoft)
         }
-        Text(number).fontSize(17).fontWeight(FontWeight.Bold).fontColor('#63918A')
-      }.width(56).height(56)
+        Text(number)
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.sageDeep)
+      }
+      .width(56)
+      .height(56)
 
       Column() {
-        Text(title).fontSize(19).fontWeight(FontWeight.Bold).fontColor('#30363A')
-        Text(description).fontSize(15).fontColor('#667085').margin({ top: 7 })
-      }.alignItems(HorizontalAlign.Start).margin({ left: 16 }).layoutWeight(1)
+        Text(title)
+          .fontSize(19)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.ink)
+        Text(description)
+          .fontSize(15)
+          .fontColor(AppColors.stone)
+          .margin({ top: 7 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .margin({ left: 16 })
+      .layoutWeight(1)
     }
-    .width('100%').padding(20)
-    .backgroundColor($r('sys.color.comp_background_list_card'))
-    .borderRadius(24).margin({ bottom: 14 })
+    .width('100%')
+    .padding(20)
+    .backgroundColor(AppColors.card)
+    .borderRadius(24)
+    .shadow(AppColors.shadowCard)
+    .margin({ bottom: 14 })
   }
 
+  // ============================================================
+  //  语音设置页：分段选择器 + 系统开关
+  // ============================================================
   @Builder
   buildVoiceSettingsPage() {
     NavDestination() {
       Column() {
+        // 返回栏
         Row() {
-          Text('‹').fontSize(42).fontColor('#63918A')
-            .onClick(() => { this.backToSettings() })
-          Text('语音设置').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#30363A').margin({ left: 10 })
-          Blank()
-        }.width('100%').margin({ top: 32 })
+          Stack() {
+            Circle()
+              .width(44)
+              .height(44)
+              .backgroundColor(AppColors.card)
+            Text('‹')
+              .fontSize(26)
+              .fontColor(AppColors.ink)
+              .margin({ bottom: 4 })
+          }
+          .shadow(AppColors.shadowCard)
+          .onClick(() => { this.backToSettings() })
 
+          Text('语音设置')
+            .fontSize(26)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(AppColors.ink)
+            .margin({ left: 14 })
+          Blank()
+        }
+        .width('100%')
+        .margin({ top: 40 })
+
+        // 播报速度：分段选择器
         Column() {
-          Text('播报速度').fontSize(21).fontWeight(FontWeight.Bold).fontColor('#30363A')
-          Text(`当前：${this.speechSpeed}`).fontSize(16).fontColor('#667085').margin({ top: 8 })
+          Row() {
+            Text('播报速度')
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.ink)
+            Blank()
+            Text(`当前：${this.speechSpeed}`)
+              .fontSize(14)
+              .fontColor(AppColors.sageDeep)
+          }
+          .width('100%')
+
           Row() {
             this.buildSpeedButton('慢')
             this.buildSpeedButton('标准')
             this.buildSpeedButton('快')
-          }.width('100%').justifyContent(FlexAlign.SpaceBetween).margin({ top: 20 })
+          }
+          .width('100%')
+          .padding(4)
+          .backgroundColor(AppColors.sageSoft)
+          .borderRadius(20)
+          .margin({ top: 18 })
         }
-        .width('100%').padding(22)
-        .backgroundColor($r('sys.color.comp_background_list_card'))
-        .borderRadius(26).margin({ top: 34 })
+        .width('100%')
+        .padding(22)
+        .backgroundColor(AppColors.card)
+        .borderRadius(24)
+        .shadow(AppColors.shadowCard)
+        .margin({ top: 30 })
 
+        // 反馈开关卡：振动 + 语音
         Column() {
           Row() {
             Column() {
-              Text('振动提示').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
+              Text('振动提示')
+                .fontSize(19)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(AppColors.ink)
               Text(this.vibrationEnabled ? '进入和退出识别时提供振动反馈' : '振动反馈已关闭')
-                .fontSize(15).fontColor('#667085').margin({ top: 8 })
+                .fontSize(14)
+                .fontColor(AppColors.stone)
+                .margin({ top: 7 })
             }
-            Blank()
-            Button(this.vibrationEnabled ? '开启' : '关闭')
-              .fontSize(15)
-              .fontColor(this.vibrationEnabled ? Color.White : '#63918A')
-              .backgroundColor(this.vibrationEnabled ? '#63918A' : '#E8F1EF')
-              .borderRadius(18)
-              .onClick(() => { this.vibrationEnabled = !this.vibrationEnabled })
-          }.width('100%')
-        }
-        .width('100%').padding(22)
-        .backgroundColor($r('sys.color.comp_background_list_card'))
-        .borderRadius(26).margin({ top: 18 })
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
 
-        Column() {
+            Toggle({ type: ToggleType.Switch, isOn: this.vibrationEnabled })
+              .selectedColor(AppColors.sage)
+              .switchPointColor(AppColors.white)
+              .onChange((isOn: boolean) => { this.vibrationEnabled = isOn })
+          }
+          .width('100%')
+
+          Divider()
+            .strokeWidth(0.5)
+            .color(AppColors.line)
+            .margin({ top: 18, bottom: 18 })
+
           Row() {
             Column() {
-              Text('语音提示').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
+              Text('语音提示')
+                .fontSize(19)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(AppColors.ink)
               Text(this.voiceHintEnabled ? '进入和退出识别时播放语音提示' : '语音提示已关闭')
-                .fontSize(15).fontColor('#667085').margin({ top: 8 })
+                .fontSize(14)
+                .fontColor(AppColors.stone)
+                .margin({ top: 7 })
             }
-            Blank()
-            Button(this.voiceHintEnabled ? '开启' : '关闭')
-              .fontSize(15)
-              .fontColor(this.voiceHintEnabled ? Color.White : '#63918A')
-              .backgroundColor(this.voiceHintEnabled ? '#63918A' : '#E8F1EF')
-              .borderRadius(18)
-              .onClick(() => { this.voiceHintEnabled = !this.voiceHintEnabled })
-          }.width('100%')
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            Toggle({ type: ToggleType.Switch, isOn: this.voiceHintEnabled })
+              .selectedColor(AppColors.sage)
+              .switchPointColor(AppColors.white)
+              .onChange((isOn: boolean) => { this.voiceHintEnabled = isOn })
+          }
+          .width('100%')
         }
-        .width('100%').padding(22)
-        .backgroundColor($r('sys.color.comp_background_list_card'))
-        .borderRadius(26).margin({ top: 18 })
+        .width('100%')
+        .padding(22)
+        .backgroundColor(AppColors.card)
+        .borderRadius(24)
+        .shadow(AppColors.shadowCard)
+        .margin({ top: 18 })
 
         Blank()
-        Text('这些设置将在后续 TTS 集成后生效').fontSize(14).fontColor('#98A2B3').margin({ bottom: 30 })
+
+        Text('这些设置将在后续 TTS 集成后生效')
+          .fontSize(14)
+          .fontColor(AppColors.mist)
+          .margin({ bottom: 30 })
       }
-      .width('100%').height('100%').padding({ left: 24, right: 24 })
-      .backgroundColor('#D5D9D5')
+      .width('100%')
+      .height('100%')
+      .padding({ left: 24, right: 24 })
+      .linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }
     .hideTitleBar(true)
   }
@@ -806,10 +1117,16 @@ struct Index {
   @Builder
   buildSpeedButton(speed: string) {
     Button(speed)
-      .width(92).height(52).fontSize(17).fontWeight(FontWeight.Bold)
-      .fontColor(this.speechSpeed === speed ? Color.White : '#63918A')
-      .backgroundColor(this.speechSpeed === speed ? '#63918A' : '#E8F1EF')
-      .borderRadius(18)
+      .layoutWeight(1)
+      .height(52)
+      .fontSize(17)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(this.speechSpeed === speed ? AppColors.white : AppColors.sageDeep)
+      .backgroundColor(this.speechSpeed === speed ? AppColors.sage : Color.Transparent)
+      .borderRadius(16)
+      .shadow(this.speechSpeed === speed
+        ? { radius: 10, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 4 }
+        : { radius: 0, color: Color.Transparent })
       .onClick(() => { this.speechSpeed = speed })
   }
 }
