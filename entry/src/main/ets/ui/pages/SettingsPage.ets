@@ -7,7 +7,7 @@ export struct SettingsPage {
       Text('探步')
         .fontSize(34)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#1F2933')
+        .fontColor('#30363A')
         .margin({ top: 40 })
 
       Text('设置与帮助')
@@ -23,7 +23,7 @@ export struct SettingsPage {
         .fontSize(26)
         .fontWeight(FontWeight.Bold)
         .fontColor(Color.White)
-        .backgroundColor('#356D73')
+        .backgroundColor('#63918A')
         .borderRadius(24)
         .onClick(() => {
           this.pageStack.pushPath({ name: 'CameraPage' })
@@ -34,7 +34,7 @@ export struct SettingsPage {
         .width('82%')
         .height(70)
         .fontSize(22)
-        .fontColor('#356D73')
+        .fontColor('#63918A')
         .backgroundColor($r('sys.color.comp_background_list_card'))
         .borderRadius(20)
         .onClick(() => {
@@ -46,7 +46,7 @@ export struct SettingsPage {
         .width('82%')
         .height(70)
         .fontSize(22)
-        .fontColor('#356D73')
+        .fontColor('#63918A')
         .backgroundColor($r('sys.color.comp_background_list_card'))
         .borderRadius(20)
 
@@ -54,7 +54,7 @@ export struct SettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F4F7F6')
+    .backgroundColor('#D5D9D5')
     .alignItems(HorizontalAlign.Center)
   }
 }

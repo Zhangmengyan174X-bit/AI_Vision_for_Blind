@@ -8,7 +8,7 @@ export struct RecognitionPage {
         Text('正在识别环境')
           .fontSize(30)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#1F2933')
+          .fontColor('#30363A')
           .margin({ top: 80 })
 
         BreathingCircle()

@@ -132,6 +132,8 @@ struct Index {
 
       console.info(`[TTS播报] ${finalSpeech} (危险状态: ${isDanger})`);
 
+      SpeechManager.getInstance().speak(finalSpeech);
+      
       // 接入 TTS
       if (isDanger) {
         // 如果你有警告音，可以在这里调用
@@ -555,7 +557,7 @@ struct Index {
     NavDestination() {
       Column() {
         Column() {
-          Text('探步').fontSize(36).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+          Text('探步').fontSize(36).fontWeight(FontWeight.Bold).fontColor('#30363A')
           Text('智能视觉辅助').fontSize(18).fontColor('#667085').margin({ top: 8 })
         }
 
@@ -564,8 +566,8 @@ struct Index {
         BreathingCircle()
 
         Column() {
-          Text('轻触屏幕任意位置').fontSize(27).fontWeight(FontWeight.Medium).fontColor('#1F2933')
-          Text('开始识别').fontSize(24).fontColor('#356D73').fontWeight(FontWeight.Bold).margin({ top: 8 })
+          Text('轻触屏幕任意位置').fontSize(27).fontWeight(FontWeight.Medium).fontColor('#30363A')
+          Text('开始识别').fontSize(24).fontColor('#63918A').fontWeight(FontWeight.Bold).margin({ top: 8 })
         }
         .opacity(this.promptOpacity)
         .translate({ y: this.promptOffset })
@@ -581,7 +583,7 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#F4F7F6')
+      .backgroundColor('#D5D9D5')
       .padding({
         left: 28,
         right: 28,
@@ -604,7 +606,7 @@ struct Index {
         Column() {
           Row() {
             Column() {
-              Text('探步').fontSize(34).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+              Text('探步').fontSize(34).fontWeight(FontWeight.Bold).fontColor('#30363A')
               Text('设置与帮助').fontSize(17).fontColor('#667085').margin({ top: 6 })
             }
             Blank()
@@ -615,7 +617,7 @@ struct Index {
             Text('开始使用').fontSize(16).fontColor('#667085')
             Button('开始识别')
               .width('100%').height(78).fontSize(27).fontWeight(FontWeight.Bold)
-              .fontColor(Color.White).backgroundColor('#356D73').borderRadius(24)
+              .fontColor(Color.White).backgroundColor('#63918A').borderRadius(24)
               .margin({ top: 14 })
               .onClick(() => { this.enterRecognition() })
               .accessibilityText('开始识别')
@@ -626,7 +628,7 @@ struct Index {
 
           Column() {
             Row() {
-              Text('使用说明').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+              Text('使用说明').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
               Blank()
               Text('›').fontSize(30).fontColor('#667085')
             }.width('100%')
@@ -639,7 +641,7 @@ struct Index {
 
           Column() {
             Row() {
-              Text('语音设置').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+              Text('语音设置').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
               Blank()
               Text('›').fontSize(30).fontColor('#667085')
             }.width('100%')
@@ -651,10 +653,10 @@ struct Index {
           .onClick(() => { this.openVoiceSettings() })
 
           Column() {
-            Text('无障碍设计').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+            Text('无障碍设计').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
             Text('大触控区域 · 语音反馈 · 振动提示').fontSize(15).fontColor('#667085').margin({ top: 10 })
             Row() {
-              Text(this.vibrationEnabled ? '振动提示：开启' : '振动提示：关闭').fontSize(16).fontColor('#356D73')
+              Text(this.vibrationEnabled ? '振动提示：开启' : '振动提示：关闭').fontSize(16).fontColor('#63918A')
               Blank()
               Text('点击设置').fontSize(15).fontColor('#98A2B3')
             }.width('100%').margin({ top: 18 })
@@ -662,13 +664,13 @@ struct Index {
           .width('100%').padding(22).backgroundColor('#E8F1EF').borderRadius(24).margin({ top: 18 })
 
           Column() {
-            Text('探步').fontSize(22).fontWeight(FontWeight.Bold).fontColor('#356D73')
+            Text('探步').fontSize(22).fontWeight(FontWeight.Bold).fontColor('#63918A')
             Text('看见环境，听见世界').fontSize(14).fontColor('#98A2B3').margin({ top: 6 })
           }.margin({ top: 34, bottom: 36 })
         }
         .width('100%').padding({ left: 24, right: 24 })
       }
-      .width('100%').height('100%').backgroundColor('#F4F7F6')
+      .width('100%').height('100%').backgroundColor('#D5D9D5')
     }
     .hideTitleBar(true)
   }
@@ -679,9 +681,9 @@ struct Index {
       Scroll() {
         Column() {
           Row() {
-            Text('‹').fontSize(42).fontColor('#356D73')
+            Text('‹').fontSize(42).fontColor('#63918A')
               .onClick(() => { this.backToSettings() })
-            Text('使用说明').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#1F2933').margin({ left: 10 })
+            Text('使用说明').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#30363A').margin({ left: 10 })
             Blank()
           }.width('100%').margin({ top: 32 })
 
@@ -692,7 +694,7 @@ struct Index {
           this.buildHelpCard('03', '听取语音提示', '应用会识别环境并通过语音告诉你周围的目标。')
 
           Column() {
-            Text('退出识别').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+            Text('退出识别').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
             Text('在识别页面点击“退出识别”，返回设置与帮助页面。').fontSize(16).fontColor('#667085').margin({ top: 8 })
           }
           .width('100%').padding(22)
@@ -701,7 +703,7 @@ struct Index {
         }
         .width('100%').padding({ left: 24, right: 24 })
       }
-      .width('100%').height('100%').backgroundColor('#F4F7F6')
+      .width('100%').height('100%').backgroundColor('#D5D9D5')
     }
     .hideTitleBar(true)
   }
@@ -715,11 +717,11 @@ struct Index {
         } else {
           Circle().width(52).height(52).backgroundColor('#E8F1EF')
         }
-        Text(number).fontSize(17).fontWeight(FontWeight.Bold).fontColor('#356D73')
+        Text(number).fontSize(17).fontWeight(FontWeight.Bold).fontColor('#63918A')
       }.width(56).height(56)
 
       Column() {
-        Text(title).fontSize(19).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+        Text(title).fontSize(19).fontWeight(FontWeight.Bold).fontColor('#30363A')
         Text(description).fontSize(15).fontColor('#667085').margin({ top: 7 })
       }.alignItems(HorizontalAlign.Start).margin({ left: 16 }).layoutWeight(1)
     }
@@ -733,14 +735,14 @@ struct Index {
     NavDestination() {
       Column() {
         Row() {
-          Text('‹').fontSize(42).fontColor('#356D73')
+          Text('‹').fontSize(42).fontColor('#63918A')
             .onClick(() => { this.backToSettings() })
-          Text('语音设置').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#1F2933').margin({ left: 10 })
+          Text('语音设置').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#30363A').margin({ left: 10 })
           Blank()
         }.width('100%').margin({ top: 32 })
 
         Column() {
-          Text('播报速度').fontSize(21).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+          Text('播报速度').fontSize(21).fontWeight(FontWeight.Bold).fontColor('#30363A')
           Text(`当前：${this.speechSpeed}`).fontSize(16).fontColor('#667085').margin({ top: 8 })
           Row() {
             this.buildSpeedButton('慢')
@@ -755,15 +757,15 @@ struct Index {
         Column() {
           Row() {
             Column() {
-              Text('振动提示').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+              Text('振动提示').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
               Text(this.vibrationEnabled ? '进入和退出识别时提供振动反馈' : '振动反馈已关闭')
                 .fontSize(15).fontColor('#667085').margin({ top: 8 })
             }
             Blank()
             Button(this.vibrationEnabled ? '开启' : '关闭')
               .fontSize(15)
-              .fontColor(this.vibrationEnabled ? Color.White : '#356D73')
-              .backgroundColor(this.vibrationEnabled ? '#356D73' : '#E8F1EF')
+              .fontColor(this.vibrationEnabled ? Color.White : '#63918A')
+              .backgroundColor(this.vibrationEnabled ? '#63918A' : '#E8F1EF')
               .borderRadius(18)
               .onClick(() => { this.vibrationEnabled = !this.vibrationEnabled })
           }.width('100%')
@@ -775,15 +777,15 @@ struct Index {
         Column() {
           Row() {
             Column() {
-              Text('语音提示').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#1F2933')
+              Text('语音提示').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#30363A')
               Text(this.voiceHintEnabled ? '进入和退出识别时播放语音提示' : '语音提示已关闭')
                 .fontSize(15).fontColor('#667085').margin({ top: 8 })
             }
             Blank()
             Button(this.voiceHintEnabled ? '开启' : '关闭')
               .fontSize(15)
-              .fontColor(this.voiceHintEnabled ? Color.White : '#356D73')
-              .backgroundColor(this.voiceHintEnabled ? '#356D73' : '#E8F1EF')
+              .fontColor(this.voiceHintEnabled ? Color.White : '#63918A')
+              .backgroundColor(this.voiceHintEnabled ? '#63918A' : '#E8F1EF')
               .borderRadius(18)
               .onClick(() => { this.voiceHintEnabled = !this.voiceHintEnabled })
           }.width('100%')
@@ -796,7 +798,7 @@ struct Index {
         Text('这些设置将在后续 TTS 集成后生效').fontSize(14).fontColor('#98A2B3').margin({ bottom: 30 })
       }
       .width('100%').height('100%').padding({ left: 24, right: 24 })
-      .backgroundColor('#F4F7F6')
+      .backgroundColor('#D5D9D5')
     }
     .hideTitleBar(true)
   }
@@ -805,8 +807,8 @@ struct Index {
   buildSpeedButton(speed: string) {
     Button(speed)
       .width(92).height(52).fontSize(17).fontWeight(FontWeight.Bold)
-      .fontColor(this.speechSpeed === speed ? Color.White : '#356D73')
-      .backgroundColor(this.speechSpeed === speed ? '#356D73' : '#E8F1EF')
+      .fontColor(this.speechSpeed === speed ? Color.White : '#63918A')
+      .backgroundColor(this.speechSpeed === speed ? '#63918A' : '#E8F1EF')
       .borderRadius(18)
       .onClick(() => { this.speechSpeed = speed })
   }

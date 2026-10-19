@@ -27,7 +27,7 @@ export struct BreathingCircle {
         Circle()
           .width(130)
           .height(130)
-          .fill('#356D73')
+          .fill('#63918A')
           .opacity(this.opacityValue)
           .scale({
             x: this.scaleValue,
@@ -37,7 +37,7 @@ export struct BreathingCircle {
         Circle()
           .width(130)
           .height(130)
-          .backgroundColor('#356D73')
+          .backgroundColor('#63918A')
           .fillOpacity(this.opacityValue)
           .scale({
             x: this.scaleValue,
