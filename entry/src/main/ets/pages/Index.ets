@@ -6,7 +6,6 @@ import { mindSporeLite } from '@kit.MindSporeLiteKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
 import { SpeechManager } from '../utils/SpeechManager';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit';
@@ -45,17 +44,23 @@ struct Index {
   onObjectDetected(objects: DetectedObject[]): void {
     if (objects.length === 0) return;
 
-    // 【第一道防线】过滤掉常见误识别物品（幻觉），以及太小的噪点
+    // 1. 过滤掉常见误识别物品，以及太小的噪点
     const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
     objects = objects.filter(obj => {
       const isIgnored = ignoreLabels.includes(obj.label);
       const isTooSmall = (obj.box.width * obj.box.height) < 0.03;
-      return !isIgnored && !isTooSmall;
+
+      // 【防反光】过滤掉长宽比极其奇怪的框（比如细长的反光）
+      const aspectRatio = obj.box.width / obj.box.height;
+      const isWeirdShape = aspectRatio > 3 || aspectRatio < 0.33;
+
+      return !isIgnored && !isTooSmall && !isWeirdShape;
     });
 
     if (objects.length === 0) return;
 
     const now = Date.now();
+
     let highestThreatObj: DetectedObject | null = null;
     let highestThreatScore = -1;
     let finalSpeech = '';
@@ -124,12 +129,20 @@ struct Index {
     }
 
     if (highestThreatObj) {
-      if (finalSpeech === this.lastSpokenText && (now - this.lastSpeakTime < 2000)) {
+      // 1.5 秒内同样的东西不重复报
+      if (finalSpeech === this.lastSpokenText && (now - this.lastSpeakTime < 1500)) {
         return;
       }
 
       console.info(`[TTS播报] ${finalSpeech} (危险状态: ${isDanger})`);
-      SpeechManager.getInstance().speak(finalSpeech);
+
+      // 【核心修正】：先掐断之前没播完的废话！
+      SpeechManager.getInstance().stop();
+
+      // 给系统 50 毫秒的缓冲时间把上一句掐断，再念最新的这句
+      setTimeout(() => {
+        SpeechManager.getInstance().speak(finalSpeech);
+      }, 50);
 
       this.lastSpokenText = finalSpeech;
       this.lastSpeakTime = now;
