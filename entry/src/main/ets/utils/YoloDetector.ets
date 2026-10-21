@@ -133,6 +133,7 @@ export class YoloDetector {
     const numClasses = 80;
     const numBoxes = 8400;
 
+    // 1. 遍历 8400 个框，提取分数 > 0.45 的目标
     for (let i = 0; i < numBoxes; i++) {
       let maxClassScore = 0;
       let maxClassId = -1;
@@ -166,8 +167,43 @@ export class YoloDetector {
       });
     }
 
-    hilog.info(0xFF00, 'YoloDetector', `解析出 ${results.length} 个目标`);
-    return results.sort((a, b) => b.score - a.score);
+    hilog.info(0xFF00, 'YoloDetector', `NMS前解析出 ${results.length} 个目标`);
+
+    // 2. 【核心】按置信度从高到低排序（标准 YOLO 流程）
+    results.sort((a, b) => b.score - a.score);
+
+    // 3. 【核心】NMS 非极大值抑制（合并重叠框）
+    const nmsResults: DetectedObject[] = [];
+    for (let i = 0; i < results.length; i++) {
+      let keep = true;
+      for (let j = 0; j < nmsResults.length; j++) {
+        // 计算两个框的 IoU（交并比）
+        const boxA = results[i].box;
+        const boxB = nmsResults[j].box;
+
+        const xA = Math.max(boxA.left, boxB.left);
+        const yA = Math.max(boxA.top, boxB.top);
+        const xB = Math.min(boxA.left + boxA.width, boxB.left + boxB.width);
+        const yB = Math.min(boxA.top + boxA.height, boxB.top + boxB.height);
+
+        const interArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
+        const iou = interArea / (boxA.width * boxA.height + boxB.width * boxB.height - interArea);
+
+        // 如果重叠度超过 0.45，说明是同一个物体，丢弃置信度低的那个（即当前的 results[i]）
+        if (iou > 0.45) {
+          keep = false;
+          break;
+        }
+      }
+      if (keep) {
+        nmsResults.push(results[i]);
+      }
+    }
+
+    hilog.info(0xFF00, 'YoloDetector', `NMS后剩余 ${nmsResults.length} 个目标`);
+
+    // 返回去重且按置信度排序后的结果
+    return nmsResults;
   }
 
   release(): void {

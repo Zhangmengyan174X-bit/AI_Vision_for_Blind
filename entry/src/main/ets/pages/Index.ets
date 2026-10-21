@@ -75,7 +75,8 @@ struct Index {
       if (centerX < 0.33) positionStr = '左前方';
       else if (centerX > 0.67) positionStr = '右前方';
 
-      let threatScore = currentArea * 100;
+      // 置信度是基础分（0~100分），面积只作为微调（最多加 20 分）
+      let threatScore = obj.score * 100 + currentArea * 20;
       let objIsDanger = false;
       let statusStr = '';
 
