@@ -137,18 +137,22 @@ struct Index {
 
       console.info(`[TTS播报] ${finalSpeech} (危险状态: ${isDanger})`);
 
-      // 【核心修正】：先掐断之前没播完的废话！
-      SpeechManager.getInstance().stop();
+      // 【核心优化：只在必要时打断】
+      const isCompletelyNew = !finalSpeech.includes(this.lastSpokenText) && !this.lastSpokenText.includes(finalSpeech);
 
-      // 给系统 50 毫秒的缓冲时间把上一句掐断，再念最新的这句
-      setTimeout(() => {
+      if (isDanger || isCompletelyNew) {
+        SpeechManager.getInstance().stop();
+        setTimeout(() => {
+          SpeechManager.getInstance().speak(finalSpeech);
+        }, 50);
+      } else {
         SpeechManager.getInstance().speak(finalSpeech);
-      }, 50);
+      }
 
       this.lastSpokenText = finalSpeech;
       this.lastSpeakTime = now;
     }
-  }
+  }  // ← 这个是闭合 onObjectDetected 方法的！
 
   aboutToAppear(): void {
     SpeechManager.getInstance().init();
