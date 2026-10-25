@@ -5,6 +5,8 @@ export class SpeechManager {
   private ttsEngine: textToSpeech.TextToSpeechEngine | null = null;
   private isInitialized: boolean = false;
 
+  private currentSpeed: number = 1.0;
+
   private constructor() {}
 
   public static getInstance(): SpeechManager {
@@ -12,6 +14,17 @@ export class SpeechManager {
       SpeechManager.instance = new SpeechManager();
     }
     return SpeechManager.instance;
+  }
+
+  public setSpeed(speed: string): void {
+    if (speed === '慢') {
+      this.currentSpeed = 0.7;
+    } else if (speed === '快') {
+      this.currentSpeed = 1.3;
+    } else {
+      this.currentSpeed = 1.0;
+    }
+    console.info(`TTS 语速已设置为: ${speed} (${this.currentSpeed})`);
   }
 
   // 初始化引擎（建议在页面加载时调用）
@@ -34,11 +47,13 @@ export class SpeechManager {
   }
 
   // 播报文本
-  public async speak(text: string, speed: number = 1.0): Promise<void> {
+  public async speak(text: string, speed: number = -1): Promise<void> {
     if (!this.ttsEngine) {
       console.error('TTS 引擎还没初始化');
       return;
     }
+
+    const finalSpeed: number = speed > 0 ? speed : this.currentSpeed;
 
     const requestId = `speak_${Date.now()}`;
 
@@ -56,7 +71,7 @@ export class SpeechManager {
       requestId: requestId,
       extraParams: {
         'queueMode': 0,
-        'speed': speed,      // 语速
+        'speed': finalSpeed,      // 语速
         'volume': 1.0,
         'pitch': 1.0,
         'languageContext': 'zh-CN',

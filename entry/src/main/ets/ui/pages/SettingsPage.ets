@@ -2,24 +2,8 @@ import { AppColors, PAGE_GRADIENT } from '../AppTheme'
 
 @Component
 export struct SettingsPage {
-  @Consume('pageStack') pageStack: NavPathStack
-
   build() {
     Column() {
-
-      Stack() {
-        Circle()
-          .width(64)
-          .height(64)
-          .backgroundColor(AppColors.sage)
-        Text('探')
-          .fontSize(28)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(AppColors.white)
-      }
-      .shadow({ radius: 16, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 8 })
-      .margin({ top: 56 })
-
       Text('探步')
         .fontSize(34)
         .fontWeight(FontWeight.Bold)
@@ -29,11 +13,12 @@ export struct SettingsPage {
 
       Text('设置与帮助')
         .fontSize(16)
-        .fontColor(AppColors.stone)
+        .fontColor(AppColors.ink)
         .margin({ top: 8 })
 
       Blank()
 
+      // 主行动按钮
       Button('开始识别')
         .width('86%')
         .height(76)
@@ -43,11 +28,9 @@ export struct SettingsPage {
         .backgroundColor(AppColors.sage)
         .borderRadius(22)
         .shadow(AppColors.shadowButton)
-        .onClick(() => {
-          this.pageStack.pushPath({ name: 'CameraPage' })
-        })
         .margin({ bottom: 18 })
 
+      // 次级入口：暖白描边风格
       Button('使用说明')
         .width('86%')
         .height(66)
@@ -58,9 +41,6 @@ export struct SettingsPage {
         .borderRadius(20)
         .border({ width: 1, color: AppColors.line })
         .shadow(AppColors.shadowCard)
-        .onClick(() => {
-          this.pageStack.clear()
-        })
         .margin({ bottom: 18 })
 
       Button('设置')

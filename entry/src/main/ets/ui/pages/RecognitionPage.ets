@@ -5,27 +5,30 @@ import { AppColors, PAGE_GRADIENT } from '../AppTheme'
 export struct RecognitionPage {
   build() {
     Stack() {
-      // 背景装饰圆
-      Circle()
+      // 背景装饰圆（容器圆，兼容全版本）
+      Column()
         .width(260)
         .height(260)
         .backgroundColor(AppColors.sage)
+        .borderRadius(130)
         .opacity(0.06)
         .position({ x: '-22%', y: '-6%' })
-      Circle()
+      Column()
         .width(200)
         .height(200)
         .backgroundColor(AppColors.sageDeep)
+        .borderRadius(100)
         .opacity(0.05)
         .position({ x: '74%', y: '78%' })
 
       Column() {
         // 状态胶囊
         Row() {
-          Circle()
+          Column()
             .width(9)
             .height(9)
             .backgroundColor(AppColors.sage)
+            .borderRadius(4.5)
           Text('识别进行中')
             .fontSize(14)
             .fontColor(AppColors.sageDeep)
@@ -46,7 +49,7 @@ export struct RecognitionPage {
 
         Text('语音辅助已开启，请缓慢移动手机')
           .fontSize(15)
-          .fontColor(AppColors.stone)
+          .fontColor(AppColors.ink)
           .margin({ top: 12 })
       }
       .width('100%')

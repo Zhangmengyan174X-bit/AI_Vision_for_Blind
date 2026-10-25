@@ -6,9 +6,9 @@ import { mindSporeLite } from '@kit.MindSporeLiteKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
 import { SpeechManager } from '../utils/SpeechManager';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
-import { deviceInfo } from '@kit.BasicServicesKit';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit';
+import { vibrator } from '@kit.SensorServiceKit';
 import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
 
 @Entry
@@ -457,6 +457,7 @@ struct Index {
   }
 
   private enterRecognition(): void {
+    this.vibrate(60) // ★★★ 新增：进入识别时振动反馈 ★★★
     this.pageStack.pushPath({ name: 'CameraPage' })
   }
   private openHelp(): void {
@@ -469,10 +470,39 @@ struct Index {
     this.pageStack.pop()
   }
 
+  // ★★★ 新增：振动反馈（受「振动提示」开关控制）★★★
+  private vibrate(duration: number): void {
+    if (!this.vibrationEnabled) {
+      return;
+    }
+    try {
+      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'touch' });
+    } catch (err) {
+      console.error('振动失败: ' + JSON.stringify(err));
+    }
+  }
+
+  // ★★★ 新增：朗读「使用说明」页内容（受「语音提示」开关控制）★★★
+  private speakHelpPage(): void {
+    if (!this.voiceHintEnabled) {
+      return;
+    }
+    const helpText: string = '使用说明。简单三步开始使用。' +
+      '第一步，打开应用，启动探步后，应用会进入待机模式。' +
+      '第二步，轻触任意位置，屏幕任意位置都可以触碰，不需要寻找按钮。' +
+      '第三步，听取语音提示，应用会识别环境并通过语音告诉你周围的目标。' +
+      '退出识别：在识别页面点击退出识别按钮，即可返回设置与帮助页面。';
+    SpeechManager.getInstance().speak(helpText);
+  }
+
+  // ============================================================
+  //  相机识别页：深色悬浮层 + 底部渐变压暗，保证任何画面下可读
+  // ============================================================
   @Builder
   buildCameraPage() {
     NavDestination() {
       Stack() {
+
         XComponent({
           id: 'camera_preview',
           type: XComponentType.SURFACE,
@@ -487,11 +517,14 @@ struct Index {
           })
 
         Column() {
+          // 顶部状态胶囊：墨底 + 亮青状态点
           Row() {
-            Circle()
+            // 状态点（容器圆，兼容全版本）
+            Column()
               .width(10)
               .height(10)
               .backgroundColor(AppColors.sageLight)
+              .borderRadius(5)
             Text('正在识别中')
               .fontSize(15)
               .fontColor(AppColors.white)
@@ -504,6 +537,7 @@ struct Index {
 
           Blank()
 
+          // 底部：渐变压暗 + 大触控退出按钮
           Column() {
             Button('退出识别')
               .width('100%')
@@ -516,6 +550,7 @@ struct Index {
               .border({ width: 1, color: 'rgba(255, 255, 255, 0.22)' })
               .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.28)', offsetX: 0, offsetY: 8 })
               .onClick(() => {
+                this.vibrate(60) // ★★★ 新增：退出识别时振动反馈 ★★★
                 this.pageStack.replacePath({ name: 'Settings' });
               })
           }
@@ -560,20 +595,27 @@ struct Index {
     }
   }
 
+  // ============================================================
+  //  欢迎页：渐变背景 + 装饰圆 + 呼吸圆 + 入场动效
+  // ============================================================
   @Builder
   buildWelcomePage() {
     NavDestination() {
       Stack() {
-        Circle()
+        // 背景装饰圆（极低透明度，增加层次）
+        // 背景装饰圆（容器圆，兼容全版本）
+        Column()
           .width(280)
           .height(280)
           .backgroundColor(AppColors.sage)
+          .borderRadius(140)
           .opacity(0.07)
           .position({ x: '-25%', y: '-8%' })
-        Circle()
+        Column()
           .width(220)
           .height(220)
           .backgroundColor(AppColors.sageDeep)
+          .borderRadius(110)
           .opacity(0.06)
           .position({ x: '72%', y: '76%' })
 
@@ -586,7 +628,7 @@ struct Index {
               .letterSpacing(4)
             Text('智能视觉辅助')
               .fontSize(16)
-              .fontColor(AppColors.stone)
+              .fontColor(AppColors.ink)
               .letterSpacing(6)
               .margin({ top: 10 })
           }
@@ -612,14 +654,16 @@ struct Index {
           .opacity(this.promptOpacity)
           .translate({ y: this.promptOffset })
 
+          // 底部能力说明胶囊
           Row() {
-            Circle()
+            Column()
               .width(8)
               .height(8)
               .backgroundColor(AppColors.sage)
+              .borderRadius(4)
             Text('环境感知 · 语音辅助')
               .fontSize(14)
-              .fontColor(AppColors.stone)
+              .fontColor(AppColors.ink)
               .margin({ left: 8 })
           }
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
@@ -632,6 +676,7 @@ struct Index {
         .height('100%')
         .padding({ left: 28, right: 28 })
         .onClick(() => {
+          this.vibrate(60)
           this.pageStack.pushPath({ name: 'CameraPage' })
         })
         .accessibilityText('轻触屏幕任意位置，开始识别')
@@ -643,11 +688,15 @@ struct Index {
     .hideTitleBar(true)
   }
 
+  // ============================================================
+  //  设置与帮助首页：统一卡片语言（暖白卡 + 柔和投影）
+  // ============================================================
   @Builder
   buildSettingsPage() {
     NavDestination() {
       Scroll() {
         Column() {
+          // 顶部品牌区
           Row() {
             Column() {
               Text('探步')
@@ -657,33 +706,22 @@ struct Index {
                 .letterSpacing(2)
               Text('设置与帮助')
                 .fontSize(16)
-                .fontColor(AppColors.stone)
+                .fontColor(AppColors.ink)
                 .margin({ top: 6 })
             }
             .alignItems(HorizontalAlign.Start)
 
             Blank()
-
-            Stack() {
-              Circle()
-                .width(52)
-                .height(52)
-                .backgroundColor(AppColors.sage)
-              Text('探')
-                .fontSize(22)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(AppColors.white)
-            }
-            .shadow({ radius: 14, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 6 })
           }
           .width('100%')
           .margin({ top: 44 })
 
+          // 主行动卡：开始识别
           Column() {
             Row() {
               Text('开始使用')
                 .fontSize(13)
-                .fontColor(AppColors.stone)
+                .fontColor(AppColors.ink)
                 .letterSpacing(3)
               Blank()
             }
@@ -709,10 +747,13 @@ struct Index {
           .shadow(AppColors.shadowCard)
           .margin({ top: 32 })
 
+          // 入口卡：使用说明
           this.buildEntryCard('说', '使用说明', '了解如何开始识别、退出识别以及使用语音辅助', () => { this.openHelp() })
 
+          // 入口卡：语音设置
           this.buildEntryCard('语', '语音设置', `当前语速：${this.speechSpeed}`, () => { this.openVoiceSettings() })
 
+          // 无障碍能力卡（浅青底）
           Column() {
             Row() {
               Text('无障碍设计')
@@ -731,7 +772,7 @@ struct Index {
 
             Text('大触控区域 · 语音反馈 · 振动提示')
               .fontSize(15)
-              .fontColor(AppColors.stone)
+              .fontColor(AppColors.ink)
               .margin({ top: 10 })
 
             Divider()
@@ -757,6 +798,7 @@ struct Index {
           .borderRadius(24)
           .margin({ top: 18 })
 
+          // 页脚
           Column() {
             Text('探步')
               .fontSize(22)
@@ -780,14 +822,16 @@ struct Index {
     .hideTitleBar(true)
   }
 
+  /** 通用入口卡：左侧首字徽标 + 标题/副标题 + 箭头 */
   @Builder
   buildEntryCard(mark: string, title: string, subtitle: string, onTap: () => void) {
     Row() {
       Stack() {
-        Circle()
+        Column()
           .width(48)
           .height(48)
           .backgroundColor(AppColors.sageSoft)
+          .borderRadius(24)
         Text(mark)
           .fontSize(19)
           .fontWeight(FontWeight.Bold)
@@ -801,7 +845,7 @@ struct Index {
           .fontColor(AppColors.ink)
         Text(subtitle)
           .fontSize(14)
-          .fontColor(AppColors.stone)
+          .fontColor(AppColors.ink)
           .margin({ top: 6 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -821,17 +865,22 @@ struct Index {
     .onClick(onTap)
   }
 
+  // ============================================================
+  //  使用说明页
+  // ============================================================
   @Builder
   buildHelpPage() {
     NavDestination() {
       Scroll() {
         Column() {
+          // 返回栏
           Row() {
             Stack() {
-              Circle()
+              Column()
                 .width(44)
                 .height(44)
                 .backgroundColor(AppColors.card)
+                .borderRadius(22)
               Text('‹')
                 .fontSize(26)
                 .fontColor(AppColors.ink)
@@ -852,7 +901,7 @@ struct Index {
 
           Text('简单三步开始使用')
             .fontSize(16)
-            .fontColor(AppColors.stone)
+            .fontColor(AppColors.ink)
             .width('100%')
             .margin({ top: 12, bottom: 24 })
 
@@ -860,13 +909,15 @@ struct Index {
           this.buildHelpCard('02', '轻触任意位置', '屏幕任意位置都可以触碰，不需要寻找按钮。')
           this.buildHelpCard('03', '听取语音提示', '应用会识别环境并通过语音告诉你周围的目标。')
 
+          // 退出说明卡
           Column() {
             Row() {
               Stack() {
-                Circle()
+                Column()
                   .width(48)
                   .height(48)
                   .backgroundColor(AppColors.sageSoft)
+                  .borderRadius(24)
                 Text('退')
                   .fontSize(19)
                   .fontWeight(FontWeight.Bold)
@@ -879,7 +930,7 @@ struct Index {
                   .fontColor(AppColors.ink)
                 Text('在识别页面点击“退出识别”，返回设置与帮助页面。')
                   .fontSize(15)
-                  .fontColor(AppColors.stone)
+                  .fontColor(AppColors.ink)
                   .margin({ top: 7 })
               }
               .alignItems(HorizontalAlign.Start)
@@ -903,17 +954,23 @@ struct Index {
       .linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }
     .hideTitleBar(true)
+    .onShown(() => {
+      this.speakHelpPage()
+    })
+    .onHidden(() => {
+      SpeechManager.getInstance().stop()
+    })
   }
 
   @Builder
   buildHelpCard(number: string, title: string, description: string) {
     Row() {
       Stack() {
-        if (deviceInfo.apiAvailable('26.0.0')) {
-          Circle().width(52).height(52).fill(AppColors.sageSoft)
-        } else {
-          Circle().width(52).height(52).backgroundColor(AppColors.sageSoft)
-        }
+        Column()
+          .width(52)
+          .height(52)
+          .backgroundColor(AppColors.sageSoft)
+          .borderRadius(26)
         Text(number)
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
@@ -929,7 +986,7 @@ struct Index {
           .fontColor(AppColors.ink)
         Text(description)
           .fontSize(15)
-          .fontColor(AppColors.stone)
+          .fontColor(AppColors.ink)
           .margin({ top: 7 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -944,16 +1001,21 @@ struct Index {
     .margin({ bottom: 14 })
   }
 
+  // ============================================================
+  //  语音设置页：分段选择器 + 系统开关
+  // ============================================================
   @Builder
   buildVoiceSettingsPage() {
     NavDestination() {
       Column() {
+        // 返回栏
         Row() {
           Stack() {
-            Circle()
+            Column()
               .width(44)
               .height(44)
               .backgroundColor(AppColors.card)
+              .borderRadius(22)
             Text('‹')
               .fontSize(26)
               .fontColor(AppColors.ink)
@@ -972,6 +1034,7 @@ struct Index {
         .width('100%')
         .margin({ top: 40 })
 
+        // 播报速度：分段选择器
         Column() {
           Row() {
             Text('播报速度')
@@ -1003,6 +1066,7 @@ struct Index {
         .shadow(AppColors.shadowCard)
         .margin({ top: 30 })
 
+        // 反馈开关卡：振动 + 语音
         Column() {
           Row() {
             Column() {
@@ -1012,7 +1076,7 @@ struct Index {
                 .fontColor(AppColors.ink)
               Text(this.vibrationEnabled ? '进入和退出识别时提供振动反馈' : '振动反馈已关闭')
                 .fontSize(14)
-                .fontColor(AppColors.stone)
+                .fontColor(AppColors.ink)
                 .margin({ top: 7 })
             }
             .alignItems(HorizontalAlign.Start)
@@ -1021,7 +1085,12 @@ struct Index {
             Toggle({ type: ToggleType.Switch, isOn: this.vibrationEnabled })
               .selectedColor(AppColors.sage)
               .switchPointColor(AppColors.white)
-              .onChange((isOn: boolean) => { this.vibrationEnabled = isOn })
+              .onChange((isOn: boolean) => {
+                this.vibrationEnabled = isOn
+                if (isOn) {
+                  this.vibrate(60)
+                }
+              })
           }
           .width('100%')
 
@@ -1038,7 +1107,7 @@ struct Index {
                 .fontColor(AppColors.ink)
               Text(this.voiceHintEnabled ? '进入和退出识别时播放语音提示' : '语音提示已关闭')
                 .fontSize(14)
-                .fontColor(AppColors.stone)
+                .fontColor(AppColors.ink)
                 .margin({ top: 7 })
             }
             .alignItems(HorizontalAlign.Start)
@@ -1060,7 +1129,7 @@ struct Index {
 
         Blank()
 
-        Text('这些设置将在后续 TTS 集成后生效')
+        Text('语速、振动与语音提示均已生效')
           .fontSize(14)
           .fontColor(AppColors.mist)
           .margin({ bottom: 30 })
@@ -1086,6 +1155,9 @@ struct Index {
       .shadow(this.speechSpeed === speed
         ? { radius: 10, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 4 }
         : { radius: 0, color: Color.Transparent })
-      .onClick(() => { this.speechSpeed = speed })
+      .onClick(() => {
+        this.speechSpeed = speed
+        SpeechManager.getInstance().setSpeed(speed)
+      })
   }
 }
