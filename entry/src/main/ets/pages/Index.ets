@@ -1256,7 +1256,7 @@ struct PrivacyDialog {
         .margin({ top: 12 })
         .accessibilityText('查看完整隐私政策链接')
         .onClick(() => {
-          const privacyUrl: string = 'https://example.com/privacy' // ← 替换这里
+          const privacyUrl: string = 'https://github.com/Zhangmengyan174X-bit/tanbu-privacy/blob/main/privacy.md'
           try {
             const ctx = this.privacyContext as common.UIAbilityContext
             ctx.openLink(privacyUrl)
