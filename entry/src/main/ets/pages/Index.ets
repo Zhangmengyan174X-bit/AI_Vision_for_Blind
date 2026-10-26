@@ -1269,11 +1269,18 @@ struct PrivacyDialog {
         .accessibilityText('查看完整隐私政策链接')
         .onClick(() => {
           const privacyUrl: string = 'https://github.com/Zhangmengyan174X-bit/tanbu-privacy/blob/main/privacy.md'
+          console.info('[隐私政策] 链接被点击，准备打开: ' + privacyUrl)
           try {
-            const ctx = this.privacyContext as common.UIAbilityContext
+            const ctx = getContext(this) as common.UIAbilityContext
             ctx.openLink(privacyUrl)
+              .then(() => {
+                console.info('[隐私政策] 链接打开成功')
+              })
+              .catch((e: BusinessError) => {
+                console.error(`[隐私政策] 打开失败 code=${e.code} msg=${e.message}`)
+              })
           } catch (err) {
-            console.error('打开隐私政策链接失败: ' + JSON.stringify(err));
+            console.error('[隐私政策] 调用异常: ' + JSON.stringify(err));
           }
         })
 
