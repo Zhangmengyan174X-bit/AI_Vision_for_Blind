@@ -473,21 +473,29 @@ struct Index {
     this.pageStack.pop()
   }
 
+  // ★★★ 修复：startVibration 返回 Promise，不接住则失败时静默无日志 ★★★
   private vibrate(duration: number): void {
     if (!this.vibrationEnabled) {
       return;
     }
     try {
-      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' });
-      console.info(`[振动] startVibration 成功，时长=${duration}ms`);
+      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' })
+        .then(() => {
+          console.info(`[振动] startVibration 成功，时长=${duration}ms`);
+        })
+        .catch((e: BusinessError) => {
+          // ★★★ 新增：Promise 失败也必须打印错误码，否则无声无息 ★★★
+          console.error(`[振动] startVibration 失败 code=${e.code} msg=${e.message}`);
+          try {
+            // 兼容回退：旧版接口（已废弃但部分设备仍可用）
+            vibrator.vibrate(duration);
+            console.info('[振动] 已回退到 vibrate() 旧接口');
+          } catch (e2) {
+            console.error('[振动] vibrate() 也失败: ' + JSON.stringify(e2));
+          }
+        });
     } catch (err) {
-      console.error('[振动] startVibration 失败: ' + JSON.stringify(err));
-      try {
-        vibrator.vibrate(duration);
-        console.info('[振动] 已回退到 vibrate() 旧接口');
-      } catch (e2) {
-        console.error('[振动] vibrate() 也失败: ' + JSON.stringify(e2));
-      }
+      console.error('[振动] 调用异常: ' + JSON.stringify(err));
     }
   }
 
@@ -542,10 +550,14 @@ struct Index {
     }
   }
 
-  private speakHelpPage(): void {
+  // ★★★ 修复：朗读前先 await 引擎初始化完成（init 幂等），否则引擎未就绪时静默 return ★★★
+  private async speakHelpPage(): Promise<void> {
+    console.info('[使用说明] onShown 触发，准备朗读');
     if (!this.voiceHintEnabled) {
+      console.info('[使用说明] 语音提示开关已关闭，跳过朗读');
       return;
     }
+    await SpeechManager.getInstance().init(); // 引擎未初始化时先等它就绪
     const helpText: string = '使用说明。简单三步开始使用。' +
       '第一步，打开应用，启动探步后，应用进入待机模式。' +
       '第二步，轻触屏幕任意位置，即可进入识别模式。' +
