@@ -9,6 +9,7 @@ import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit';
 import { vibrator } from '@kit.SensorServiceKit';
+import { preferences } from '@kit.ArkData';
 import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
 
 @Entry
@@ -161,6 +162,8 @@ struct Index {
     this.initGyroscope();
 
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+
+    this.checkPrivacy(context)
 
     this.yoloDetector = new YoloDetector(context);
     this.yoloDetector.loadModel().then((success: boolean) => {
@@ -457,7 +460,7 @@ struct Index {
   }
 
   private enterRecognition(): void {
-    this.vibrate(60) // ★★★ 新增：进入识别时振动反馈 ★★★
+    this.vibrate(60)
     this.pageStack.pushPath({ name: 'CameraPage' })
   }
   private openHelp(): void {
@@ -470,26 +473,82 @@ struct Index {
     this.pageStack.pop()
   }
 
-  // ★★★ 新增：振动反馈（受「振动提示」开关控制）★★★
   private vibrate(duration: number): void {
     if (!this.vibrationEnabled) {
       return;
     }
     try {
-      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'touch' });
+      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' });
+      console.info(`[振动] startVibration 成功，时长=${duration}ms`);
     } catch (err) {
-      console.error('振动失败: ' + JSON.stringify(err));
+      console.error('[振动] startVibration 失败: ' + JSON.stringify(err));
+      try {
+        vibrator.vibrate(duration);
+        console.info('[振动] 已回退到 vibrate() 旧接口');
+      } catch (e2) {
+        console.error('[振动] vibrate() 也失败: ' + JSON.stringify(e2));
+      }
     }
   }
 
-  // ★★★ 新增：朗读「使用说明」页内容（受「语音提示」开关控制）★★★
+  private privacyContext: common.UIAbilityContext | null = null
+  private privacyController: CustomDialogController | null = null
+
+  private checkPrivacy(context: common.UIAbilityContext): void {
+    try {
+      this.privacyContext = context
+      const prefs = preferences.getPreferencesSync(context, { name: 'app_settings' })
+      const agreed = prefs.getSync('privacyAgreed', false) as boolean
+      if (agreed) {
+        return; // 已同意过，不再弹出
+      }
+      this.privacyController = new CustomDialogController({
+        builder: PrivacyDialog({
+          onAgree: () => { this.markPrivacyAgreed() },
+          onDisagree: () => { this.exitApp() }
+        }),
+        customStyle: true,
+        alignment: DialogAlignment.Center,
+        autoCancel: false // 不允许点击空白处关闭，必须做出选择
+      })
+      // 延迟半秒弹出，等首页渲染完成
+      setTimeout(() => {
+        this.privacyController?.open()
+      }, 500)
+    } catch (err) {
+      console.error('隐私政策检查失败: ' + JSON.stringify(err));
+    }
+  }
+
+  private markPrivacyAgreed(): void {
+    try {
+      if (!this.privacyContext) {
+        return;
+      }
+      const prefs = preferences.getPreferencesSync(this.privacyContext, { name: 'app_settings' })
+      prefs.putSync('privacyAgreed', true)
+      prefs.flush()
+      console.info('隐私政策：用户已同意');
+    } catch (err) {
+      console.error('保存隐私政策状态失败: ' + JSON.stringify(err));
+    }
+  }
+
+  private exitApp(): void {
+    try {
+      this.privacyContext?.terminateSelf()
+    } catch (err) {
+      console.error('退出应用失败: ' + JSON.stringify(err));
+    }
+  }
+
   private speakHelpPage(): void {
     if (!this.voiceHintEnabled) {
       return;
     }
     const helpText: string = '使用说明。简单三步开始使用。' +
-      '第一步，打开应用，启动探步后，应用会进入待机模式。' +
-      '第二步，轻触任意位置，屏幕任意位置都可以触碰，不需要寻找按钮。' +
+      '第一步，打开应用，启动探步后，应用进入待机模式。' +
+      '第二步，轻触屏幕任意位置，即可进入识别模式。' +
       '第三步，听取语音提示，应用会识别环境并通过语音告诉你周围的目标。' +
       '退出识别：在识别页面点击退出识别按钮，即可返回设置与帮助页面。';
     SpeechManager.getInstance().speak(helpText);
@@ -515,6 +574,7 @@ struct Index {
             this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId();
             this.initCamera();
           })
+          .accessibilityText('相机取景画面')
 
         Column() {
           // 顶部状态胶囊：墨底 + 亮青状态点
@@ -534,6 +594,7 @@ struct Index {
           .padding({ left: 16, right: 18, top: 9, bottom: 9 })
           .borderRadius(20)
           .margin({ top: 54 })
+          .accessibilityGroup(true)
 
           Blank()
 
@@ -550,9 +611,10 @@ struct Index {
               .border({ width: 1, color: 'rgba(255, 255, 255, 0.22)' })
               .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.28)', offsetX: 0, offsetY: 8 })
               .onClick(() => {
-                this.vibrate(60) // ★★★ 新增：退出识别时振动反馈 ★★★
+                this.vibrate(60)
                 this.pageStack.replacePath({ name: 'Settings' });
               })
+              .accessibilityText('退出识别，返回设置页面')
           }
           .width('100%')
           .padding({ left: 24, right: 24, top: 72, bottom: 34 })
@@ -797,6 +859,7 @@ struct Index {
           .backgroundColor(AppColors.sageSoft)
           .borderRadius(24)
           .margin({ top: 18 })
+          .accessibilityGroup(true)
 
           // 页脚
           Column() {
@@ -863,6 +926,8 @@ struct Index {
     .shadow(AppColors.shadowCard)
     .margin({ top: 18 })
     .onClick(onTap)
+    .accessibilityGroup(true)
+    .accessibilityText(title + '，' + subtitle)
   }
 
   // ============================================================
@@ -888,6 +953,7 @@ struct Index {
             }
             .shadow(AppColors.shadowCard)
             .onClick(() => { this.backToSettings() })
+            .accessibilityText('返回上一页')
 
             Text('使用说明')
               .fontSize(26)
@@ -905,8 +971,8 @@ struct Index {
             .width('100%')
             .margin({ top: 12, bottom: 24 })
 
-          this.buildHelpCard('01', '打开应用', '启动探步后，应用会进入待机模式。')
-          this.buildHelpCard('02', '轻触任意位置', '屏幕任意位置都可以触碰，不需要寻找按钮。')
+          this.buildHelpCard('01', '打开应用', '启动探步后，应用进入待机模式。')
+          this.buildHelpCard('02', '轻触屏幕任意位置', '即可进入识别模式。')
           this.buildHelpCard('03', '听取语音提示', '应用会识别环境并通过语音告诉你周围的目标。')
 
           // 退出说明卡
@@ -945,6 +1011,7 @@ struct Index {
           .borderRadius(24)
           .shadow(AppColors.shadowCard)
           .margin({ top: 4, bottom: 40 })
+          .accessibilityGroup(true)
         }
         .width('100%')
         .padding({ left: 24, right: 24 })
@@ -999,6 +1066,7 @@ struct Index {
     .borderRadius(24)
     .shadow(AppColors.shadowCard)
     .margin({ bottom: 14 })
+    .accessibilityGroup(true)
   }
 
   // ============================================================
@@ -1023,6 +1091,7 @@ struct Index {
           }
           .shadow(AppColors.shadowCard)
           .onClick(() => { this.backToSettings() })
+          .accessibilityText('返回上一页')
 
           Text('语音设置')
             .fontSize(26)
@@ -1085,6 +1154,7 @@ struct Index {
             Toggle({ type: ToggleType.Switch, isOn: this.vibrationEnabled })
               .selectedColor(AppColors.sage)
               .switchPointColor(AppColors.white)
+              .accessibilityText('振动提示开关')
               .onChange((isOn: boolean) => {
                 this.vibrationEnabled = isOn
                 if (isOn) {
@@ -1116,6 +1186,7 @@ struct Index {
             Toggle({ type: ToggleType.Switch, isOn: this.voiceHintEnabled })
               .selectedColor(AppColors.sage)
               .switchPointColor(AppColors.white)
+              .accessibilityText('语音提示开关')
               .onChange((isOn: boolean) => { this.voiceHintEnabled = isOn })
           }
           .width('100%')
@@ -1129,10 +1200,6 @@ struct Index {
 
         Blank()
 
-        Text('语速、振动与语音提示均已生效')
-          .fontSize(14)
-          .fontColor(AppColors.mist)
-          .margin({ bottom: 30 })
       }
       .width('100%')
       .height('100%')
@@ -1159,5 +1226,89 @@ struct Index {
         this.speechSpeed = speed
         SpeechManager.getInstance().setSpeed(speed)
       })
+      .accessibilityText('语速' + speed + (this.speechSpeed === speed ? '，当前已选中' : ''))
+  }
+}
+
+@CustomDialog
+struct PrivacyDialog {
+  controller?: CustomDialogController
+  onAgree: () => void = () => {}
+  onDisagree: () => void = () => {}
+
+  build() {
+    Column() {
+      Text('隐私政策')
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(AppColors.ink)
+
+      Text('探步为纯离线应用：所有图像识别与语音处理均在本机完成，不收集、不上传、不共享任何个人信息。相机画面仅用于实时识别，不会保存。')
+        .fontSize(15)
+        .fontColor(AppColors.ink)
+        .lineHeight(24)
+        .margin({ top: 14 })
+
+      // ★★★ 请把下面的链接替换为你在华为后台生成的隐私政策地址 ★★★
+      Text('查看完整《隐私政策》')
+        .fontSize(15)
+        .fontColor(AppColors.sageDeep)
+        .margin({ top: 12 })
+        .accessibilityText('查看完整隐私政策链接')
+        .onClick(() => {
+          const privacyUrl: string = 'https://example.com/privacy' // ← 替换这里
+          try {
+            const ctx = this.privacyContext as common.UIAbilityContext
+            ctx.openLink(privacyUrl)
+          } catch (err) {
+            console.error('打开隐私政策链接失败: ' + JSON.stringify(err));
+          }
+        })
+
+      Row() {
+        Button('不同意并退出')
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppColors.ink)
+          .backgroundColor(AppColors.sageSoft)
+          .borderRadius(14)
+          .accessibilityText('不同意并退出应用')
+          .onClick(() => {
+            this.controller?.close()
+            this.onDisagree()
+          })
+
+        Blank().width(12)
+
+        Button('同意并继续使用')
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.white)
+          .backgroundColor(AppColors.sage)
+          .borderRadius(14)
+          .shadow(AppColors.shadowButton)
+          .accessibilityText('同意隐私政策，继续使用')
+          .onClick(() => {
+            this.controller?.close()
+            this.onAgree()
+          })
+      }
+      .width('100%')
+      .margin({ top: 24 })
+    }
+    .width('86%')
+    .padding(24)
+    .backgroundColor(AppColors.card)
+    .borderRadius(24)
+    .shadow(AppColors.shadowCard)
+  }
+
+  // @CustomDialog 内获取上下文（供打开链接使用）
+  private get privacyContext(): common.UIAbilityContext {
+    return getContext(this) as common.UIAbilityContext
   }
 }

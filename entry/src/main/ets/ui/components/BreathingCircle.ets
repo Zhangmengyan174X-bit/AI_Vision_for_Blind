@@ -55,20 +55,12 @@ export struct BreathingCircle {
         .opacity(this.haloOpacity)
         .scale({ x: this.coreScale, y: this.coreScale })
 
-      // ③ 内层：品牌核心（径向渐变 + 投影）
+      // ③ 内层：品牌核心
       Column()
         .width(116)
         .height(116)
+        .backgroundColor(AppColors.sage)
         .borderRadius(58)
-        .radialGradient({
-          center: [40, 36],
-          radius: 62,
-          colors: [
-            [AppColors.sageLight, 0.0],
-            [AppColors.sage, 0.55],
-            [AppColors.sageDeep, 1.0]
-          ]
-        })
         .opacity(this.coreOpacity)
         .scale({ x: this.coreScale, y: this.coreScale })
         .shadow({ radius: 26, color: 'rgba(99, 145, 138, 0.45)', offsetX: 0, offsetY: 12 })
