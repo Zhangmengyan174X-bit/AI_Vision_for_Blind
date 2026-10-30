@@ -190,7 +190,7 @@ export class YoloDetector {
         }
       }
 
-      if (maxClassScore < 0.6) continue;
+      if (maxClassScore < 0.5) continue;
 
       const cx = outputData[0 * numBoxes + i] / this.INPUT_SIZE;
       const cy = outputData[1 * numBoxes + i] / this.INPUT_SIZE;
