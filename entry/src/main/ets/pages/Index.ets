@@ -47,94 +47,86 @@ struct Index {
   onObjectDetected(objects: DetectedObject[]): void {
     if (objects.length === 0) return;
 
+    // 1. 只过滤绝对不可能在户外的家具，【彻底删掉反光长宽比过滤】
     const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
     objects = objects.filter(obj => {
       const isIgnored = ignoreLabels.includes(obj.label);
       const isTooSmall = (obj.box.width * obj.box.height) < 0.03;
-      const aspectRatio = obj.box.width / obj.box.height;
-      const isWeirdShape = aspectRatio > 3 || aspectRatio < 0.33;
-      return !isIgnored && !isTooSmall && !isWeirdShape;
+      return !isIgnored && !isTooSmall;
     });
 
     if (objects.length === 0) return;
+
     const now = Date.now();
-    let highestThreatObj: DetectedObject | null = null;
-    let highestThreatScore = -1;
-    let finalSpeech = '';
+    let bestObj: DetectedObject | null = null;
+    let bestScore = -1;
     let isDanger = false;
+    let statusStr = '';
 
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
-      const currentArea = obj.box.width * obj.box.height;
-      const centerX = obj.box.left + obj.box.width / 2;
+      const area = obj.box.width * obj.box.height;
 
-      let positionStr = '正前方';
-      if (centerX < 0.33) positionStr = '左前方';
-      else if (centerX > 0.67) positionStr = '右前方';
+      // 【新版优先级：面积绝对优先】面积越大代表离你越近，人和车只加 15 分微调
+      let score = area * 100;
+      const isDynamic = ['人', '汽车', '自行车', '摩托车', '公交车', '卡车'].includes(obj.label);
+      if (isDynamic) score += 15;
 
-      let threatScore = obj.score * 100 + currentArea * 20;
-      let objIsDanger = false;
-      let statusStr = '';
-      const distanceStr = currentArea > 0.15 ? '' : '远处';
+      if (score > bestScore) {
+        bestScore = score;
+        bestObj = obj;
 
-      const lastState = this.lastObjectState.get(obj.label);
-      if (lastState && this.isPhoneStable) {
-        const timeDiff = now - (lastState.get('time') || 0);
-        if (timeDiff > 0 && timeDiff < 800) {
+        // 【新版冲撞判定：连续变大就报警】
+        const lastState = this.lastObjectState.get(obj.label);
+        statusStr = '';
+        isDanger = false;
+
+        if (lastState && this.isPhoneStable) {
           const lastArea = lastState.get('area') || 0.01;
-          const areaGrowthRate = (currentArea - lastArea) / lastArea;
-
-          if (areaGrowthRate > 0.4) {
-            threatScore += 200;
-            objIsDanger = true;
-            statusStr = '有快速冲过来的';
-          } else if (areaGrowthRate > 0.1) {
-            threatScore += 50;
-            statusStr = '有正在靠近的';
+          // 只要这帧面积比上一帧大 5%（不再要求离谱的 40%），且离得近（面积>0.1），立刻报警！
+          if (area > lastArea * 1.05 && area > 0.1) {
+            isDanger = true;
+            statusStr = '正在逼近';
           }
         }
       }
 
-      const isVehicle = ['汽车', '自行车', '摩托车', '公交车', '卡车'].includes(obj.label);
-      if (obj.label === '人' || isVehicle) {
-        threatScore += 30;
-      }
-
+      // 更新状态
       const stateMap = new Map<string, number>();
-      stateMap.set('area', currentArea);
+      stateMap.set('area', area);
       stateMap.set('time', now);
       this.lastObjectState.set(obj.label, stateMap);
-
-      if (threatScore > highestThreatScore) {
-        highestThreatScore = threatScore;
-        highestThreatObj = obj;
-
-        let dodgeDir = '停步';
-        if (centerX < 0.33) dodgeDir = '向右躲';
-        else if (centerX > 0.67) dodgeDir = '向左躲';
-
-        if (objIsDanger) {
-          finalSpeech = `警告！${positionStr}，${dodgeDir}！${statusStr}${obj.label}`;
-          isDanger = true;
-        } else if (statusStr) {
-          finalSpeech = `${distanceStr}${positionStr}${statusStr}${obj.label}`;
-        } else {
-          finalSpeech = `${distanceStr}${positionStr}有${obj.label}`;
-        }
-      }
     }
 
-    if (highestThreatObj) {
-      if (finalSpeech === this.lastSpokenText && (now - this.lastSpeakTime < 1500)) return;
-      console.info(`[TTS播报] ${finalSpeech} (危险状态: ${isDanger})`);
-      const isCompletelyNew = !finalSpeech.includes(this.lastSpokenText) && !this.lastSpokenText.includes(finalSpeech);
-      if (isDanger || isCompletelyNew) {
-        SpeechManager.getInstance().stop();
-        setTimeout(() => { SpeechManager.getInstance().speak(finalSpeech); }, 50);
+    if (bestObj) {
+      const centerX = bestObj.box.left + bestObj.box.width / 2;
+      let pos = '正前方';
+      if (centerX < 0.33) pos = '左前方';
+      else if (centerX > 0.67) pos = '右前方';
+
+      // 拼装播报文案
+      let speech = '';
+      if (isDanger) {
+        let dodgeDir = '请停步';
+        if (centerX < 0.33) dodgeDir = '请向右躲';
+        else if (centerX > 0.67) dodgeDir = '请向左躲';
+        speech = `警告！${pos}有${bestObj.label}${statusStr}，${dodgeDir}`;
       } else {
-        SpeechManager.getInstance().speak(finalSpeech);
+        speech = `${pos}有${bestObj.label}`;
       }
-      this.lastSpokenText = finalSpeech;
+
+      // 【去重】：3 秒内不重复报同一个东西，防止 TTS 累死
+      if (speech === this.lastSpokenText && (now - this.lastSpeakTime < 3000)) {
+        return;
+      }
+
+      console.info(`[TTS播报] ${speech}`);
+
+      // 【强杀】：直接打断上一句
+      SpeechManager.getInstance().stop();
+      SpeechManager.getInstance().speak(speech);
+
+      this.lastSpokenText = speech;
       this.lastSpeakTime = now;
     }
   }
