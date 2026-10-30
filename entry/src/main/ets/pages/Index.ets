@@ -6,10 +6,9 @@ import { mindSporeLite } from '@kit.MindSporeLiteKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
 import { SpeechManager } from '../utils/SpeechManager';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit';
-import { vibrator } from '@kit.SensorServiceKit';
-import { preferences } from '@kit.ArkData';
 import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
 
 @Entry
@@ -153,7 +152,7 @@ struct Index {
       this.lastSpokenText = finalSpeech;
       this.lastSpeakTime = now;
     }
-  }
+  }  // ← 这个是闭合 onObjectDetected 方法的！
 
   aboutToAppear(): void {
     SpeechManager.getInstance().init();
@@ -162,8 +161,6 @@ struct Index {
     this.initGyroscope();
 
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-
-    this.checkPrivacy(context)
 
     this.yoloDetector = new YoloDetector(context);
     this.yoloDetector.loadModel().then((success: boolean) => {
@@ -460,7 +457,6 @@ struct Index {
   }
 
   private enterRecognition(): void {
-    this.vibrate(60)
     this.pageStack.pushPath({ name: 'CameraPage' })
   }
   private openHelp(): void {
@@ -473,99 +469,10 @@ struct Index {
     this.pageStack.pop()
   }
 
-  private vibrate(duration: number): void {
-    if (!this.vibrationEnabled) {
-      return;
-    }
-    try {
-      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' })
-        .then(() => {
-          console.info(`[振动] startVibration 成功，时长=${duration}ms`);
-        })
-        .catch((e: BusinessError) => {
-          console.error(`[振动] startVibration 失败 code=${e.code} msg=${e.message}`);
-          try {
-            vibrator.vibrate(duration);
-            console.info('[振动] 已回退到 vibrate() 旧接口');
-          } catch (e2) {
-            console.error('[振动] vibrate() 也失败: ' + JSON.stringify(e2));
-          }
-        });
-    } catch (err) {
-      console.error('[振动] 调用异常: ' + JSON.stringify(err));
-    }
-  }
-
-  private privacyContext: common.UIAbilityContext | null = null
-  private privacyController: CustomDialogController | null = null
-
-  private checkPrivacy(context: common.UIAbilityContext): void {
-    try {
-      this.privacyContext = context
-      const prefs = preferences.getPreferencesSync(context, { name: 'app_settings' })
-      const agreed = prefs.getSync('privacyAgreed', false) as boolean
-      if (agreed) {
-        return; // 已同意过，不再弹出
-      }
-      this.privacyController = new CustomDialogController({
-        builder: PrivacyDialog({
-          onAgree: () => { this.markPrivacyAgreed() },
-          onDisagree: () => { this.exitApp() }
-        }),
-        customStyle: true,
-        alignment: DialogAlignment.Center,
-        autoCancel: false // 不允许点击空白处关闭，必须做出选择
-      })
-      setTimeout(() => {
-        this.privacyController?.open()
-      }, 500)
-    } catch (err) {
-      console.error('隐私政策检查失败: ' + JSON.stringify(err));
-    }
-  }
-
-  private markPrivacyAgreed(): void {
-    try {
-      if (!this.privacyContext) {
-        return;
-      }
-      const prefs = preferences.getPreferencesSync(this.privacyContext, { name: 'app_settings' })
-      prefs.putSync('privacyAgreed', true)
-      prefs.flush()
-      console.info('隐私政策：用户已同意');
-    } catch (err) {
-      console.error('保存隐私政策状态失败: ' + JSON.stringify(err));
-    }
-  }
-
-  private exitApp(): void {
-    try {
-      this.privacyContext?.terminateSelf()
-    } catch (err) {
-      console.error('退出应用失败: ' + JSON.stringify(err));
-    }
-  }
-
-  private async speakHelpPage(): Promise<void> {
-    console.info('[使用说明] onShown 触发，准备朗读');
-    if (!this.voiceHintEnabled) {
-      console.info('[使用说明] 语音提示开关已关闭，跳过朗读');
-      return;
-    }
-    await SpeechManager.getInstance().init(); // 引擎未初始化时先等它就绪
-    const helpText: string = '使用说明。简单三步开始使用。' +
-      '第一步，打开应用，启动探步后，应用进入待机模式。' +
-      '第二步，轻触屏幕任意位置，即可进入识别模式。' +
-      '第三步，听取语音提示，应用会识别环境并通过语音告诉你周围的目标。' +
-      '退出识别：在识别页面点击退出识别按钮，即可返回设置与帮助页面。';
-    SpeechManager.getInstance().speak(helpText);
-  }
-
   @Builder
   buildCameraPage() {
     NavDestination() {
       Stack() {
-
         XComponent({
           id: 'camera_preview',
           type: XComponentType.SURFACE,
@@ -578,15 +485,13 @@ struct Index {
             this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId();
             this.initCamera();
           })
-          .accessibilityText('相机取景画面')
 
         Column() {
           Row() {
-            Column()
+            Circle()
               .width(10)
               .height(10)
               .backgroundColor(AppColors.sageLight)
-              .borderRadius(5)
             Text('正在识别中')
               .fontSize(15)
               .fontColor(AppColors.white)
@@ -596,7 +501,6 @@ struct Index {
           .padding({ left: 16, right: 18, top: 9, bottom: 9 })
           .borderRadius(20)
           .margin({ top: 54 })
-          .accessibilityGroup(true)
 
           Blank()
 
@@ -612,10 +516,8 @@ struct Index {
               .border({ width: 1, color: 'rgba(255, 255, 255, 0.22)' })
               .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.28)', offsetX: 0, offsetY: 8 })
               .onClick(() => {
-                this.vibrate(60)
                 this.pageStack.replacePath({ name: 'Settings' });
               })
-              .accessibilityText('退出识别，返回设置页面')
           }
           .width('100%')
           .padding({ left: 24, right: 24, top: 72, bottom: 34 })
@@ -662,18 +564,16 @@ struct Index {
   buildWelcomePage() {
     NavDestination() {
       Stack() {
-        Column()
+        Circle()
           .width(280)
           .height(280)
           .backgroundColor(AppColors.sage)
-          .borderRadius(140)
           .opacity(0.07)
           .position({ x: '-25%', y: '-8%' })
-        Column()
+        Circle()
           .width(220)
           .height(220)
           .backgroundColor(AppColors.sageDeep)
-          .borderRadius(110)
           .opacity(0.06)
           .position({ x: '72%', y: '76%' })
 
@@ -686,7 +586,7 @@ struct Index {
               .letterSpacing(4)
             Text('智能视觉辅助')
               .fontSize(16)
-              .fontColor(AppColors.ink)
+              .fontColor(AppColors.stone)
               .letterSpacing(6)
               .margin({ top: 10 })
           }
@@ -713,14 +613,13 @@ struct Index {
           .translate({ y: this.promptOffset })
 
           Row() {
-            Column()
+            Circle()
               .width(8)
               .height(8)
               .backgroundColor(AppColors.sage)
-              .borderRadius(4)
             Text('环境感知 · 语音辅助')
               .fontSize(14)
-              .fontColor(AppColors.ink)
+              .fontColor(AppColors.stone)
               .margin({ left: 8 })
           }
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
@@ -733,7 +632,6 @@ struct Index {
         .height('100%')
         .padding({ left: 28, right: 28 })
         .onClick(() => {
-          this.vibrate(60)
           this.pageStack.pushPath({ name: 'CameraPage' })
         })
         .accessibilityText('轻触屏幕任意位置，开始识别')
@@ -759,12 +657,24 @@ struct Index {
                 .letterSpacing(2)
               Text('设置与帮助')
                 .fontSize(16)
-                .fontColor(AppColors.ink)
+                .fontColor(AppColors.stone)
                 .margin({ top: 6 })
             }
             .alignItems(HorizontalAlign.Start)
 
             Blank()
+
+            Stack() {
+              Circle()
+                .width(52)
+                .height(52)
+                .backgroundColor(AppColors.sage)
+              Text('探')
+                .fontSize(22)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(AppColors.white)
+            }
+            .shadow({ radius: 14, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 6 })
           }
           .width('100%')
           .margin({ top: 44 })
@@ -773,7 +683,7 @@ struct Index {
             Row() {
               Text('开始使用')
                 .fontSize(13)
-                .fontColor(AppColors.ink)
+                .fontColor(AppColors.stone)
                 .letterSpacing(3)
               Blank()
             }
@@ -821,7 +731,7 @@ struct Index {
 
             Text('大触控区域 · 语音反馈 · 振动提示')
               .fontSize(15)
-              .fontColor(AppColors.ink)
+              .fontColor(AppColors.stone)
               .margin({ top: 10 })
 
             Divider()
@@ -846,7 +756,6 @@ struct Index {
           .backgroundColor(AppColors.sageSoft)
           .borderRadius(24)
           .margin({ top: 18 })
-          .accessibilityGroup(true)
 
           Column() {
             Text('探步')
@@ -875,11 +784,10 @@ struct Index {
   buildEntryCard(mark: string, title: string, subtitle: string, onTap: () => void) {
     Row() {
       Stack() {
-        Column()
+        Circle()
           .width(48)
           .height(48)
           .backgroundColor(AppColors.sageSoft)
-          .borderRadius(24)
         Text(mark)
           .fontSize(19)
           .fontWeight(FontWeight.Bold)
@@ -893,7 +801,7 @@ struct Index {
           .fontColor(AppColors.ink)
         Text(subtitle)
           .fontSize(14)
-          .fontColor(AppColors.ink)
+          .fontColor(AppColors.stone)
           .margin({ top: 6 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -911,8 +819,6 @@ struct Index {
     .shadow(AppColors.shadowCard)
     .margin({ top: 18 })
     .onClick(onTap)
-    .accessibilityGroup(true)
-    .accessibilityText(title + '，' + subtitle)
   }
 
   @Builder
@@ -922,11 +828,10 @@ struct Index {
         Column() {
           Row() {
             Stack() {
-              Column()
+              Circle()
                 .width(44)
                 .height(44)
                 .backgroundColor(AppColors.card)
-                .borderRadius(22)
               Text('‹')
                 .fontSize(26)
                 .fontColor(AppColors.ink)
@@ -934,7 +839,6 @@ struct Index {
             }
             .shadow(AppColors.shadowCard)
             .onClick(() => { this.backToSettings() })
-            .accessibilityText('返回上一页')
 
             Text('使用说明')
               .fontSize(26)
@@ -948,22 +852,21 @@ struct Index {
 
           Text('简单三步开始使用')
             .fontSize(16)
-            .fontColor(AppColors.ink)
+            .fontColor(AppColors.stone)
             .width('100%')
             .margin({ top: 12, bottom: 24 })
 
-          this.buildHelpCard('01', '打开应用', '启动探步后，应用进入待机模式。')
-          this.buildHelpCard('02', '轻触屏幕任意位置', '即可进入识别模式。')
+          this.buildHelpCard('01', '打开应用', '启动探步后，应用会进入待机模式。')
+          this.buildHelpCard('02', '轻触任意位置', '屏幕任意位置都可以触碰，不需要寻找按钮。')
           this.buildHelpCard('03', '听取语音提示', '应用会识别环境并通过语音告诉你周围的目标。')
 
           Column() {
             Row() {
               Stack() {
-                Column()
+                Circle()
                   .width(48)
                   .height(48)
                   .backgroundColor(AppColors.sageSoft)
-                  .borderRadius(24)
                 Text('退')
                   .fontSize(19)
                   .fontWeight(FontWeight.Bold)
@@ -976,7 +879,7 @@ struct Index {
                   .fontColor(AppColors.ink)
                 Text('在识别页面点击“退出识别”，返回设置与帮助页面。')
                   .fontSize(15)
-                  .fontColor(AppColors.ink)
+                  .fontColor(AppColors.stone)
                   .margin({ top: 7 })
               }
               .alignItems(HorizontalAlign.Start)
@@ -991,7 +894,6 @@ struct Index {
           .borderRadius(24)
           .shadow(AppColors.shadowCard)
           .margin({ top: 4, bottom: 40 })
-          .accessibilityGroup(true)
         }
         .width('100%')
         .padding({ left: 24, right: 24 })
@@ -1001,23 +903,17 @@ struct Index {
       .linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }
     .hideTitleBar(true)
-    .onShown(() => {
-      this.speakHelpPage()
-    })
-    .onHidden(() => {
-      SpeechManager.getInstance().stop()
-    })
   }
 
   @Builder
   buildHelpCard(number: string, title: string, description: string) {
     Row() {
       Stack() {
-        Column()
-          .width(52)
-          .height(52)
-          .backgroundColor(AppColors.sageSoft)
-          .borderRadius(26)
+        if (deviceInfo.apiAvailable('26.0.0')) {
+          Circle().width(52).height(52).fill(AppColors.sageSoft)
+        } else {
+          Circle().width(52).height(52).backgroundColor(AppColors.sageSoft)
+        }
         Text(number)
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
@@ -1033,7 +929,7 @@ struct Index {
           .fontColor(AppColors.ink)
         Text(description)
           .fontSize(15)
-          .fontColor(AppColors.ink)
+          .fontColor(AppColors.stone)
           .margin({ top: 7 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -1046,7 +942,6 @@ struct Index {
     .borderRadius(24)
     .shadow(AppColors.shadowCard)
     .margin({ bottom: 14 })
-    .accessibilityGroup(true)
   }
 
   @Builder
@@ -1055,11 +950,10 @@ struct Index {
       Column() {
         Row() {
           Stack() {
-            Column()
+            Circle()
               .width(44)
               .height(44)
               .backgroundColor(AppColors.card)
-              .borderRadius(22)
             Text('‹')
               .fontSize(26)
               .fontColor(AppColors.ink)
@@ -1067,7 +961,6 @@ struct Index {
           }
           .shadow(AppColors.shadowCard)
           .onClick(() => { this.backToSettings() })
-          .accessibilityText('返回上一页')
 
           Text('语音设置')
             .fontSize(26)
@@ -1119,7 +1012,7 @@ struct Index {
                 .fontColor(AppColors.ink)
               Text(this.vibrationEnabled ? '进入和退出识别时提供振动反馈' : '振动反馈已关闭')
                 .fontSize(14)
-                .fontColor(AppColors.ink)
+                .fontColor(AppColors.stone)
                 .margin({ top: 7 })
             }
             .alignItems(HorizontalAlign.Start)
@@ -1128,13 +1021,7 @@ struct Index {
             Toggle({ type: ToggleType.Switch, isOn: this.vibrationEnabled })
               .selectedColor(AppColors.sage)
               .switchPointColor(AppColors.white)
-              .accessibilityText('振动提示开关')
-              .onChange((isOn: boolean) => {
-                this.vibrationEnabled = isOn
-                if (isOn) {
-                  this.vibrate(60)
-                }
-              })
+              .onChange((isOn: boolean) => { this.vibrationEnabled = isOn })
           }
           .width('100%')
 
@@ -1151,7 +1038,7 @@ struct Index {
                 .fontColor(AppColors.ink)
               Text(this.voiceHintEnabled ? '进入和退出识别时播放语音提示' : '语音提示已关闭')
                 .fontSize(14)
-                .fontColor(AppColors.ink)
+                .fontColor(AppColors.stone)
                 .margin({ top: 7 })
             }
             .alignItems(HorizontalAlign.Start)
@@ -1160,7 +1047,6 @@ struct Index {
             Toggle({ type: ToggleType.Switch, isOn: this.voiceHintEnabled })
               .selectedColor(AppColors.sage)
               .switchPointColor(AppColors.white)
-              .accessibilityText('语音提示开关')
               .onChange((isOn: boolean) => { this.voiceHintEnabled = isOn })
           }
           .width('100%')
@@ -1174,6 +1060,10 @@ struct Index {
 
         Blank()
 
+        Text('这些设置将在后续 TTS 集成后生效')
+          .fontSize(14)
+          .fontColor(AppColors.mist)
+          .margin({ bottom: 30 })
       }
       .width('100%')
       .height('100%')
@@ -1196,98 +1086,6 @@ struct Index {
       .shadow(this.speechSpeed === speed
         ? { radius: 10, color: 'rgba(99, 145, 138, 0.35)', offsetX: 0, offsetY: 4 }
         : { radius: 0, color: Color.Transparent })
-      .onClick(() => {
-        this.speechSpeed = speed
-
-      })
-      .accessibilityText('语速' + speed + (this.speechSpeed === speed ? '，当前已选中' : ''))
-  }
-}
-
-@CustomDialog
-struct PrivacyDialog {
-  controller?: CustomDialogController
-  onAgree: () => void = () => {}
-  onDisagree: () => void = () => {}
-
-  build() {
-    Column() {
-      Text('隐私政策')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(AppColors.ink)
-
-      Text('探步为纯离线应用：所有图像识别与语音处理均在本机完成，不收集、不上传、不共享任何个人信息。相机画面仅用于实时识别，不会保存。')
-        .fontSize(15)
-        .fontColor(AppColors.ink)
-        .lineHeight(24)
-        .margin({ top: 14 })
-
-      Text('查看完整《隐私政策》')
-        .fontSize(15)
-        .fontColor(AppColors.sageDeep)
-        .margin({ top: 12 })
-        .accessibilityText('查看完整隐私政策链接')
-        .onClick(() => {
-          const privacyUrl: string = 'https://github.com/Zhangmengyan174X-bit/tanbu-privacy/blob/main/privacy.md'
-          console.info('[隐私政策] 链接被点击，准备打开: ' + privacyUrl)
-          try {
-            const ctx = getContext(this) as common.UIAbilityContext
-            ctx.openLink(privacyUrl)
-              .then(() => {
-                console.info('[隐私政策] 链接打开成功')
-              })
-              .catch((e: BusinessError) => {
-                console.error(`[隐私政策] 打开失败 code=${e.code} msg=${e.message}`)
-              })
-          } catch (err) {
-            console.error('[隐私政策] 调用异常: ' + JSON.stringify(err));
-          }
-        })
-
-      Row() {
-        Button('不同意并退出')
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(AppColors.ink)
-          .backgroundColor(AppColors.sageSoft)
-          .borderRadius(14)
-          .accessibilityText('不同意并退出应用')
-          .onClick(() => {
-            this.controller?.close()
-            this.onDisagree()
-          })
-
-        Blank().width(12)
-
-        Button('同意并继续使用')
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(AppColors.white)
-          .backgroundColor(AppColors.sage)
-          .borderRadius(14)
-          .shadow(AppColors.shadowButton)
-          .accessibilityText('同意隐私政策，继续使用')
-          .onClick(() => {
-            this.controller?.close()
-            this.onAgree()
-          })
-      }
-      .width('100%')
-      .margin({ top: 24 })
-    }
-    .width('86%')
-    .padding(24)
-    .backgroundColor(AppColors.card)
-    .borderRadius(24)
-    .shadow(AppColors.shadowCard)
-  }
-
-  private get privacyContext(): common.UIAbilityContext {
-    return getContext(this) as common.UIAbilityContext
+      .onClick(() => { this.speechSpeed = speed })
   }
 }

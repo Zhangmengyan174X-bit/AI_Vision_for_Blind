@@ -39,4 +39,4 @@ export const PAGE_GRADIENT: Array<[ResourceColor, number]> = [
   ['#DEE2DD', 0.0],
   ['#D5D9D5', 0.55],
   ['#CBD2CB', 1.0]
-] 
+]
