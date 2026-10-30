@@ -45,7 +45,8 @@ struct Index {
     if (objects.length === 0) return;
 
     // 1. 过滤掉常见误识别物品，以及太小的噪点
-    const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
+    // 如果输出英文，用这个：
+    const ignoreLabels = ['Refrigerator', 'Television', 'Microwave oven', 'Oven', 'Bed', 'Toilet', 'Sink'];
     objects = objects.filter(obj => {
       const isIgnored = ignoreLabels.includes(obj.label);
       const isTooSmall = (obj.box.width * obj.box.height) < 0.03;
