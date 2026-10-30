@@ -15,9 +15,14 @@
         "name": "ohos.permission.CAMERA",
         "reason": "$string:camera_reason",
         "usedScene": {
-          "abilities": ["EntryAbility"],
+          "abilities": [
+            "EntryAbility"
+          ],
           "when": "inuse"
         }
+      },
+      {
+        "name": "ohos.permission.VIBRATE"
       },
       {
         "name": "ohos.permission.GYROSCOPE"
