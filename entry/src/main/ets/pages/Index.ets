@@ -6,7 +6,6 @@ import { mindSporeLite } from '@kit.MindSporeLiteKit';
 import { requestCameraPermission } from '../entryability/PermissionHelper';
 import { SpeechManager } from '../utils/SpeechManager';
 import { YoloDetector, DetectedObject } from '../utils/YoloDetector';
-import { deviceInfo } from '@kit.BasicServicesKit';
 import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit';
 import { vibrator } from '@kit.SensorServiceKit';
@@ -38,28 +37,28 @@ struct Index {
   private sensorCallback: ((data: sensor.GyroscopeResponse) => void) | null = null;
   @State isPreviewing: boolean = false;
   private isPhoneStable: boolean = true;
-  private isSpeaking: boolean = false; // 当前是否正在播报
-  private speakQueue: string[] = []; // 待播报队列
-  private spokenHistory: Set<string> = new Set(); // 已经播报过的物体（防重复）
-  private lastClearHistoryTime: number = 0; // 清理历史记录的时间戳
-  private lastObjectState: Map<string, Map<string, number>> = new Map(); // 用于计算冲撞
 
-  // 【修复审阅问题】用于记录是否已经同意隐私政策
+  // 【核心状态：播报队列与打断控制】
+  private speakQueue: DetectedObject[] = [];
+  private isSpeaking: boolean = false;
+  private spokenHistory: Set<number> = new Set(); // 记录播报过的 labelId
+  private lastClearHistoryTime: number = 0;
+  private lastObjectState: Map<string, Map<string, number>> = new Map(); // 用于冲撞检测
+
   private privacyContext: common.UIAbilityContext | null = null
   private privacyController: CustomDialogController | null = null
 
   onObjectDetected(objects: DetectedObject[]): void {
     if (objects.length === 0) return;
-
     const now = Date.now();
 
-    // 【清理机制】每隔 3 秒清空一次已播报记录，防止画面稍微晃一下重新出现也不报了
-    if (now - this.lastClearHistoryTime > 3000) {
+    // 每 10 秒清空一次历史，让之前报过但还在视野里的物体能重新进队列
+    if (now - this.lastClearHistoryTime > 10000) {
       this.spokenHistory.clear();
       this.lastClearHistoryTime = now;
     }
 
-    // 1. 基础过滤（去幻觉、去极小噪点、去反光）
+    // 基础过滤（去幻觉）
     const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
     const validObjects = objects.filter(obj => {
       const isIgnored = ignoreLabels.includes(obj.label);
@@ -71,10 +70,9 @@ struct Index {
 
     if (validObjects.length === 0) return;
 
-    // 2. 冲撞检测（只有冲撞才触发立刻打断）
-    let hasDanger = false;
-    let dangerSpeech = '';
-
+    // ==========================================
+    // 1. 冲撞检测（只有这个才会打断当前播报）
+    // ==========================================
     for (let i = 0; i < validObjects.length; i++) {
       const obj = validObjects[i];
       const currentArea = obj.box.width * obj.box.height;
@@ -82,6 +80,7 @@ struct Index {
 
       const lastState = this.lastObjectState.get(obj.label);
       let areaGrowthRate = 0;
+
       if (lastState && this.isPhoneStable) {
         const timeDiff = now - (lastState.get('time') || 0);
         if (timeDiff > 0 && timeDiff < 800) {
@@ -96,71 +95,85 @@ struct Index {
       stateMap.set('time', now);
       this.lastObjectState.set(obj.label, stateMap);
 
-      // 如果面积暴增 > 40% 且离得近，触发警告
+      // 面积暴增 > 40% 且离得近
       if (areaGrowthRate > 0.4 && currentArea > 0.1) {
-        hasDanger = true;
         let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
         let dodgeDir = centerX < 0.33 ? '向右躲' : (centerX > 0.67 ? '向左躲' : '停步');
-        dangerSpeech = `警告！${pos}有${obj.label}冲过来，${dodgeDir}`;
-        break; // 发现一个危险就够报警了
+        const dangerSpeech = `警告！${pos}有${obj.label}冲过来，${dodgeDir}`;
+
+        this.handleDanger(dangerSpeech);
+        return; // 冲撞警报发出，结束当前帧处理
       }
     }
 
-    // 3. 如果有冲撞危险，立刻打断当前播报，并清空队列
-    if (hasDanger) {
-      this.speakQueue = []; // 清空队列
-      this.isSpeaking = false; // 强制重置状态
-      SpeechManager.getInstance().stop();
-      SpeechManager.getInstance().speak(dangerSpeech, this.getTtsSpeed());
-      return;
-    }
-
-    // 4. 没有危险时：按置信度（score）排序，筛选出没播报过的加入队列
-    // 先把当前画面里的物体按置信度从高到低排
-    validObjects.sort((a, b) => b.score - a.score);
-
+    // ==========================================
+    // 2. 普通目标入队与插队逻辑
+    // ==========================================
     for (let i = 0; i < validObjects.length; i++) {
       const obj = validObjects[i];
-      // 如果这个物体没在历史记录里，且不在当前的队列里
-      if (!this.spokenHistory.has(obj.label) && !this.speakQueue.includes(obj.label)) {
+      let inQueue = false;
+      for (let j = 0; j < this.speakQueue.length; j++) {
+        if (this.speakQueue[j].labelId === obj.labelId) {
+          inQueue = true;
+          break;
+        }
+      }
 
-        // 判断方位
+      // 如果没报过，且不在当前队列里
+      if (!this.spokenHistory.has(obj.labelId) && !inQueue) {
         const centerX = obj.box.left + obj.box.width / 2;
         let pos = '正前方';
         if (centerX < 0.33) pos = '左前方';
         else if (centerX > 0.67) pos = '右前方';
 
-        const speechText = `${pos}有${obj.label}`;
-        this.speakQueue.push(speechText);
-        this.spokenHistory.add(obj.label); // 标记为已进队列
+        obj.speechText = `${pos}有${obj.label}`;
+        this.speakQueue.push(obj);
       }
     }
 
-    // 5. 播放队列（如果当前没在播，且队列里有东西）
-    if (!this.isSpeaking && this.speakQueue.length > 0) {
-      this.playNextInQueue();
-    }
+    // 【核心：插队机制】把新来的和原有的放在一起，按置信度从高到低重新排
+    this.speakQueue.sort((a, b) => b.score - a.score);
+
+    // 启动队列播放
+    this.processQueue();
   }
 
-  // 新增：按队列依次播报
-  private playNextInQueue(): void {
-    if (this.speakQueue.length === 0) {
-      this.isSpeaking = false;
-      return;
-    }
+  // 执行队列播报（绝不打断）
+  private processQueue(): void {
+    if (this.isSpeaking || this.speakQueue.length === 0) return;
 
     this.isSpeaking = true;
-    const text = this.speakQueue.shift()!; // 拿出第一个
-    console.info(`[TTS播报队列] 播放: ${text}`);
+    const obj = this.speakQueue.shift()!;
+    this.spokenHistory.add(obj.labelId); // 标记为已报
 
-    SpeechManager.getInstance().speak(text, this.getTtsSpeed());
+    console.info(`[TTS队列播报] ${obj.speechText} (置信度: ${obj.score.toFixed(2)})`);
+    SpeechManager.getInstance().speak(obj.speechText!, this.getTtsSpeed());
 
-    // 估算播报时长（按每秒约 4 个汉字算，加 1 秒缓冲）
-    const duration = text.length * 250 + 1000;
-
+    // 估算时长，播完后再播下一个
+    const duration = obj.speechText!.length * 250 + 1000;
     setTimeout(() => {
-      this.playNextInQueue(); // 播完接着播下一个
+      this.isSpeaking = false;
+      this.processQueue();
     }, duration);
+  }
+
+  // 冲撞报警处理（强制打断）
+  private handleDanger(dangerSpeech: string): void {
+    console.info(`[TTS危险打断] ${dangerSpeech}`);
+    // 清空普通物体队列，强行打断
+    this.speakQueue = [];
+    this.isSpeaking = false;
+    SpeechManager.getInstance().stop();
+
+    // 播报危险
+    SpeechManager.getInstance().speak(dangerSpeech, this.getTtsSpeed());
+
+    // 给危险播报加个 2.5 秒锁，防止刚报完就被新的普通队列覆盖
+    this.isSpeaking = true;
+    setTimeout(() => {
+      this.isSpeaking = false;
+      this.processQueue();
+    }, 2500);
   }
 
   aboutToAppear(): void {
@@ -169,29 +182,18 @@ struct Index {
     this.inspectNNRT();
 
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-
-    // 【修复】：只检查隐私弹窗，不直接开传感器/申请相机
     this.checkPrivacy(context);
 
-    // 添加前后台监听，退后台关闭陀螺仪
     this.getUIContext().getHostContext()?.eventHub.on('onBackground', () => {
-      if (this.sensorCallback) {
-        sensor.off(sensor.SensorId.GYROSCOPE, this.sensorCallback);
-      }
+      if (this.sensorCallback) sensor.off(sensor.SensorId.GYROSCOPE, this.sensorCallback);
     });
     this.getUIContext().getHostContext()?.eventHub.on('onForeground', () => {
-      if (this.sensorCallback) {
-        sensor.on(sensor.SensorId.GYROSCOPE, this.sensorCallback, { interval: 100000000 });
-      }
+      if (this.sensorCallback) sensor.on(sensor.SensorId.GYROSCOPE, this.sensorCallback, { interval: 100000000 });
     });
 
     this.yoloDetector = new YoloDetector(context);
     this.yoloDetector.loadModel().then((success: boolean) => {
-      if (success) {
-        console.info('YOLO 模型加载成功');
-      } else {
-        console.error('YOLO 模型加载失败');
-      }
+      console.info(success ? 'YOLO 模型加载成功' : 'YOLO 模型加载失败');
     });
   }
 
@@ -201,27 +203,18 @@ struct Index {
       const prefs = preferences.getPreferencesSync(context, { name: 'app_settings' })
       const agreed = prefs.getSync('privacyAgreed', false) as boolean
       if (agreed) {
-        this.initGyroscope(); // 已经同意过，直接开
+        this.initGyroscope();
         return;
       }
       this.privacyController = new CustomDialogController({
         builder: PrivacyDialog({
-          onAgree: () => {
-            this.markPrivacyAgreed();
-            this.initGyroscope(); // 刚同意，开陀螺仪
-          },
+          onAgree: () => { this.markPrivacyAgreed(); this.initGyroscope(); },
           onDisagree: () => { this.exitApp() }
         }),
-        customStyle: true,
-        alignment: DialogAlignment.Center,
-        autoCancel: false
+        customStyle: true, alignment: DialogAlignment.Center, autoCancel: false
       })
-      setTimeout(() => {
-        this.privacyController?.open()
-      }, 500)
-    } catch (err) {
-      console.error('隐私政策检查失败: ' + JSON.stringify(err));
-    }
+      setTimeout(() => { this.privacyController?.open() }, 500)
+    } catch (err) {}
   }
 
   private markPrivacyAgreed(): void {
@@ -233,68 +226,41 @@ struct Index {
     } catch (err) {}
   }
 
-  private exitApp(): void {
-    try {
-      this.privacyContext?.terminateSelf()
-    } catch (err) {}
-  }
+  private exitApp(): void { try { this.privacyContext?.terminateSelf() } catch (err) {} }
 
   private startWelcomeAnimation(): void {
-    this.promptOpacity = 0
-    this.promptOffset = 20
+    this.promptOpacity = 0; this.promptOffset = 20;
     setTimeout(() => {
-      this.getUIContext().animateTo({
-        duration: 1000,
-        curve: Curve.EaseOut
-      }, () => {
-        this.promptOpacity = 1
-        this.promptOffset = 0
+      this.getUIContext().animateTo({ duration: 1000, curve: Curve.EaseOut }, () => {
+        this.promptOpacity = 1; this.promptOffset = 0;
       })
     }, 700)
   }
 
   private initGyroscope(): void {
     try {
-      if (this.sensorCallback) return; // 防止重复注册
+      if (this.sensorCallback) return;
       this.sensorCallback = (data: sensor.GyroscopeResponse) => {
         const angularVelocity = Math.sqrt(data.x * data.x + data.y * data.y + data.z * data.z);
-        if (angularVelocity > 0.8) {
-          this.isPhoneStable = false;
-        } else {
-          this.isPhoneStable = true;
-        }
+        this.isPhoneStable = angularVelocity <= 0.8;
       };
       sensor.on(sensor.SensorId.GYROSCOPE, this.sensorCallback, { interval: 100000000 });
-      console.info('陀螺仪传感器已启动');
-    } catch (error) {
-      console.error('陀螺仪启动失败: ' + JSON.stringify(error));
-    }
+    } catch (error) {}
   }
 
   private inspectNNRT(): void {
-    try {
-      const devices = mindSporeLite.getAllNNRTDeviceDescriptions();
-      console.info(`[NNRT] device count = ${devices.length}`);
-    } catch (e) {
-      const err = e as BusinessError;
-    }
+    try { mindSporeLite.getAllNNRTDeviceDescriptions(); } catch (e) {}
   }
 
   aboutToDisappear(): void {
     SpeechManager.getInstance().shutdown();
     this.releaseCamera();
-    if (this.yoloDetector) {
-      this.yoloDetector.release();
-      this.yoloDetector = null;
-    }
-    if (this.sensorCallback) {
-      sensor.off(sensor.SensorId.GYROSCOPE, this.sensorCallback);
-    }
+    if (this.yoloDetector) { this.yoloDetector.release(); this.yoloDetector = null; }
+    if (this.sensorCallback) sensor.off(sensor.SensorId.GYROSCOPE, this.sensorCallback);
   }
 
   async initCamera(): Promise<void> {
     if (!this.previewSurfaceId) return;
-
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       this.cameraManager = camera.getCameraManager(context);
@@ -309,9 +275,7 @@ struct Index {
       let previewProfile = outputCapability.previewProfiles[0];
       for (let i = 1; i < outputCapability.previewProfiles.length; i++) {
         const p = outputCapability.previewProfiles[i];
-        if (p.size.width * p.size.height > previewProfile.size.width * previewProfile.size.height) {
-          previewProfile = p;
-        }
+        if (p.size.width * p.size.height > previewProfile.size.width * previewProfile.size.height) previewProfile = p;
       }
 
       this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, this.previewSurfaceId);
@@ -324,15 +288,11 @@ struct Index {
           if (err || !nextImage) return;
           const now = Date.now();
           if (now - this.lastDetectTime < this.detectInterval || this.isDetecting) {
-            nextImage.release();
-            return;
+            nextImage.release(); return;
           }
           this.lastDetectTime = now;
           this.isDetecting = true;
-          this.detectObject(nextImage).finally(() => {
-            this.isDetecting = false;
-            nextImage.release();
-          });
+          this.detectObject(nextImage).finally(() => { this.isDetecting = false; nextImage.release(); });
         });
       });
 
@@ -381,9 +341,7 @@ struct Index {
       if (!inputData || inputData.length === 0) return;
 
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
-      if (objects.length > 0) {
-        this.onObjectDetected(objects);
-      }
+      if (objects.length > 0) this.onObjectDetected(objects);
     } catch (err) {} finally {
       if (pixelMap) pixelMap.release();
       if (imageSource) imageSource.release();
@@ -421,21 +379,14 @@ struct Index {
 
   private vibrate(duration: number): void {
     if (!this.vibrationEnabled) return;
-    try {
-      vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' }).catch(() => {});
-    } catch (err) {}
+    try { vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' }).catch(() => {}); } catch (err) {}
   }
 
-  // 【修复】：用户点“开始”时，申请相机权限
   private enterRecognition(): void {
     this.vibrate(60);
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     requestCameraPermission(context).then((granted) => {
-      if (granted) {
-        this.pageStack.pushPath({ name: 'CameraPage' });
-      } else {
-        console.error('权限未授予');
-      }
+      if (granted) this.pageStack.pushPath({ name: 'CameraPage' });
     });
   }
 
@@ -446,12 +397,11 @@ struct Index {
   private async speakHelpPage(): Promise<void> {
     if (!this.voiceHintEnabled) return;
     await SpeechManager.getInstance().init();
-    const helpText: string = '使用说明。简单三步开始使用。第一步，打开应用。第二步，轻触屏幕任意位置。第三步，听取语音提示。';
-    SpeechManager.getInstance().speak(helpText, this.getTtsSpeed());
+    SpeechManager.getInstance().speak('使用说明。简单三步开始使用。第一步，打开应用。第二步，轻触屏幕任意位置。第三步，听取语音提示。', this.getTtsSpeed());
   }
 
   // ==========================================
-  // 以下是完全未改动的 UI 代码
+  // 以下 UI 代码保持原样
   // ==========================================
   @Builder
   buildCameraPage() {
@@ -520,7 +470,6 @@ struct Index {
           }.padding({ left: 18, right: 18, top: 10, bottom: 10 }).backgroundColor('rgba(246, 247, 244, 0.65)').borderRadius(22).opacity(this.promptOpacity).margin({ top: 30, bottom: 44 })
         }
         .width('100%').height('100%').padding({ left: 28, right: 28 })
-        // 【修复】：点击时调用带有权限申请的 enterRecognition
         .onClick(() => { this.enterRecognition() })
         .accessibilityText('轻触屏幕任意位置，开始识别')
       }.width('100%').height('100%').linearGradient({ angle: 160, colors: PAGE_GRADIENT })
@@ -716,22 +665,10 @@ struct PrivacyDialog {
 
   build() {
     Column() {
-      Text('隐私政策')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(AppColors.ink)
-
+      Text('隐私政策').fontSize(20).fontWeight(FontWeight.Bold).fontColor(AppColors.ink)
       Text('探步为纯离线应用：所有图像识别与语音处理均在本机完成，不收集、不上传、不共享任何个人信息。相机画面仅用于实时识别，不会保存。应用使用陀螺仪传感器判断设备平稳状态，以减少误报。')
-        .fontSize(15)
-        .fontColor(AppColors.ink)
-        .lineHeight(24)
-        .margin({ top: 14 })
-
-      Text('查看完整《隐私政策》')
-        .fontSize(15)
-        .fontColor(AppColors.sageDeep)
-        .margin({ top: 12 })
-        .accessibilityText('查看完整隐私政策链接')
+        .fontSize(15).fontColor(AppColors.ink).lineHeight(24).margin({ top: 14 })
+      Text('查看完整《隐私政策》').fontSize(15).fontColor(AppColors.sageDeep).margin({ top: 12 }).accessibilityText('查看完整隐私政策链接')
         .onClick(() => {
           const privacyUrl: string = 'https://github.com/Zhangmengyan174X-bit/tanbu-privacy/blob/main/privacy.md'
           try {
@@ -739,46 +676,15 @@ struct PrivacyDialog {
             ctx.openLink(privacyUrl)
           } catch (err) { console.error('[隐私政策] 调用异常'); }
         })
-
       Row() {
-        Button('不同意并退出')
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(AppColors.ink)
-          .backgroundColor(AppColors.sageSoft)
-          .borderRadius(14)
-          .accessibilityText('不同意并退出应用')
-          .onClick(() => {
-            this.controller?.close()
-            this.onDisagree()
-          })
-
+        Button('不同意并退出').layoutWeight(1).height(48).fontSize(16).fontWeight(FontWeight.Medium).fontColor(AppColors.ink)
+          .backgroundColor(AppColors.sageSoft).borderRadius(14).accessibilityText('不同意并退出应用')
+          .onClick(() => { this.controller?.close(); this.onDisagree() })
         Blank().width(12)
-
-        Button('同意并继续使用')
-          .layoutWeight(1)
-          .height(48)
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(AppColors.white)
-          .backgroundColor(AppColors.sage)
-          .borderRadius(14)
-          .shadow(AppColors.shadowButton)
-          .accessibilityText('同意隐私政策，继续使用')
-          .onClick(() => {
-            this.controller?.close()
-            this.onAgree()
-          })
-      }
-      .width('100%')
-      .margin({ top: 24 })
-    }
-    .width('86%')
-    .padding(24)
-    .backgroundColor(AppColors.card)
-    .borderRadius(24)
-    .shadow(AppColors.shadowCard)
+        Button('同意并继续使用').layoutWeight(1).height(48).fontSize(16).fontWeight(FontWeight.Bold).fontColor(AppColors.white)
+          .backgroundColor(AppColors.sage).borderRadius(14).shadow(AppColors.shadowButton).accessibilityText('同意隐私政策，继续使用')
+          .onClick(() => { this.controller?.close(); this.onAgree() })
+      }.width('100%').margin({ top: 24 })
+    }.width('86%').padding(24).backgroundColor(AppColors.card).borderRadius(24).shadow(AppColors.shadowCard)
   }
 }
