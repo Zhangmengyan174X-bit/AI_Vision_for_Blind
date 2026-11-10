@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "/Users/mengyanzhang/Desktop/探步/aivision.p12",
+          "storePassword": "0000001A16CFE7130AF4E4529930C0F3816C82552E6E1871EACF07014142CF96C1370946B2D22ECBAD11",
+          "keyAlias": "tanbu",
+          "keyPassword": "0000001A66B27D70478BFD9DC1E4EB39B149CD8CEF75F3B6977B7594F79EA988F174BB06C25E93F1ACCA",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/mengyanzhang/Desktop/探步/tanbu_releaseRelease.p7b",
+          "certpath": "/Users/mengyanzhang/Desktop/探步/tanbu_release.cer"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
