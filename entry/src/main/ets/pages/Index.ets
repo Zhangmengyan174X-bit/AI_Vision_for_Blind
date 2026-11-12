@@ -10,9 +10,8 @@ import { BreathingCircle } from '../ui/components/BreathingCircle';
 import { sensor } from '@kit.SensorServiceKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { preferences } from '@kit.ArkData';
-import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
 import { GyroManager } from '../utils/GyroManager';
-export let globalSensorCallback: ((data: sensor.GyroscopeResponse) => void) | null = null;
+import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
 
 @Entry
 @Component
@@ -37,7 +36,6 @@ struct Index {
   private isDetecting: boolean = false;
   private yoloDetector: YoloDetector | null = null;
 
-  private sensorCallback: ((data: sensor.GyroscopeResponse) => void) | null = null;
   @State isPreviewing: boolean = false;
   private isPhoneStable: boolean = true;
 
@@ -70,39 +68,71 @@ struct Index {
 
     if (validObjects.length === 0) return;
 
-    // 1. 冲撞检测
+    // ==========================================
+    // 1. 冲撞检测（基于边长增长率的轻量级防抖追踪）
+    // ==========================================
+    let hasDanger = false;
+    let dangerSpeech = '';
+
     for (let i = 0; i < validObjects.length; i++) {
       const obj = validObjects[i];
       const currentArea = obj.box.width * obj.box.height;
       const centerX = obj.box.left + obj.box.width / 2;
 
-      const lastState = this.lastObjectState.get(obj.label);
-      let areaGrowthRate = 0;
+      // 生成轻量级 ID：类别 + 大致方位（防止同类多目标互相覆盖状态）
+      const posX = centerX < 0.33 ? 'L' : (centerX > 0.67 ? 'R' : 'C');
+      const trackKey = `${obj.label}_${posX}`;
+
+      const lastState = this.lastObjectState.get(trackKey);
+      let growthRate = 0;
+      let previousDangerCount = 0;
 
       if (lastState && this.isPhoneStable) {
         const timeDiff = now - (lastState.get('time') || 0);
-        if (timeDiff > 0 && timeDiff < 800) {
+        if (timeDiff > 0 && timeDiff < 1000) {
           const lastArea = lastState.get('area') || 0.01;
-          areaGrowthRate = (currentArea - lastArea) / lastArea;
+          // 优化：用边长变化率代替面积，抗形变和透视干扰
+          const lastSize = Math.sqrt(lastArea);
+          const currentSize = Math.sqrt(currentArea);
+          growthRate = (currentSize - lastSize) / lastSize;
+          previousDangerCount = lastState.get('dangerCount') || 0;
+        }
+      }
+
+      // 边长暴增 30% 且具备一定体积
+      const isAreaGrowingFast = (growthRate > 0.3 && currentArea > 0.08);
+      let currentDangerCount = 0;
+
+      if (isAreaGrowingFast) {
+        currentDangerCount = previousDangerCount + 1;
+
+        // 连续 2 帧确认，才判定为冲撞
+        if (currentDangerCount >= 2) {
+          let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
+          let dodgeDir = centerX < 0.33 ? '向右躲' : (centerX > 0.67 ? '向左躲' : '停步');
+          dangerSpeech = `警告！${pos}有${obj.label}冲过来，${dodgeDir}`;
+          hasDanger = true;
+          currentDangerCount = 0;
         }
       }
 
       const stateMap = new Map<string, number>();
       stateMap.set('area', currentArea);
       stateMap.set('time', now);
-      this.lastObjectState.set(obj.label, stateMap);
+      stateMap.set('dangerCount', currentDangerCount);
+      this.lastObjectState.set(trackKey, stateMap);
 
-      if (areaGrowthRate > 0.4 && currentArea > 0.1) {
-        let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
-        let dodgeDir = centerX < 0.33 ? '向右躲' : (centerX > 0.67 ? '向左躲' : '停步');
-        const dangerSpeech = `警告！${pos}有${obj.label}冲过来，${dodgeDir}`;
-
-        this.handleDanger(dangerSpeech);
-        return;
-      }
+      if (hasDanger) break;
     }
 
-    // 2. 普通目标入队
+    if (hasDanger) {
+      this.handleDanger(dangerSpeech);
+      return;
+    }
+
+    // ==========================================
+    // 2. 普通目标入队与优先级
+    // ==========================================
     for (let i = 0; i < validObjects.length; i++) {
       const obj = validObjects[i];
       let inQueue = false;
@@ -137,7 +167,10 @@ struct Index {
 
     SpeechManager.getInstance().speak(obj.speechText!, this.getTtsSpeed());
 
-    const duration = obj.speechText!.length * 250 + 1000;
+    // 优化 TTS 估算时长，区分语速
+    const baseMs = this.speechSpeed === '慢' ? 350 : (this.speechSpeed === '快' ? 220 : 280);
+    const duration = obj.speechText!.length * baseMs + 800;
+
     setTimeout(() => {
       this.isSpeaking = false;
       this.processQueue();
@@ -148,7 +181,9 @@ struct Index {
     this.speakQueue = [];
     this.isSpeaking = false;
     SpeechManager.getInstance().stop();
-    SpeechManager.getInstance().speak(dangerSpeech, this.getTtsSpeed());
+
+    // 危险警告强制标准语速
+    SpeechManager.getInstance().speak(dangerSpeech, 1.0);
 
     this.isSpeaking = true;
     setTimeout(() => {
@@ -165,13 +200,11 @@ struct Index {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.checkPrivacy(context);
 
-    // 【合规核心修复】：监听后台，双重注销传感器并停掉相机
     this.getUIContext().getHostContext()?.eventHub.on('onBackground', () => {
       this.stopGyroscopeSafely();
       this.releaseCamera();
     });
 
-    // 监听前台，重新拉起
     this.getUIContext().getHostContext()?.eventHub.on('onForeground', () => {
       this.initGyroscope();
       if (this.isPreviewing || this.previewSurfaceId) {
@@ -238,7 +271,6 @@ struct Index {
     } catch (error) {}
   }
 
-  // 【合规核心修复】
   private stopGyroscopeSafely(): void {
     try {
       const gyro = GyroManager.getInstance();
@@ -257,7 +289,7 @@ struct Index {
     SpeechManager.getInstance().shutdown();
     this.releaseCamera();
     if (this.yoloDetector) { this.yoloDetector.release(); this.yoloDetector = null; }
-    this.stopGyroscopeSafely(); // 退出页面时也确保注销
+    this.stopGyroscopeSafely();
   }
 
   async initCamera(): Promise<void> {
