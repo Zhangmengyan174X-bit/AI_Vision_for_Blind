@@ -11,6 +11,8 @@ import { sensor } from '@kit.SensorServiceKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { preferences } from '@kit.ArkData';
 import { AppColors, PAGE_GRADIENT } from '../ui/AppTheme';
+import { GyroManager } from '../utils/GyroManager';
+export let globalSensorCallback: ((data: sensor.GyroscopeResponse) => void) | null = null;
 
 @Entry
 @Component
@@ -163,13 +165,18 @@ struct Index {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.checkPrivacy(context);
 
-    // 监听后台，严格注销传感器
+    // 【合规核心修复】：监听后台，双重注销传感器并停掉相机
     this.getUIContext().getHostContext()?.eventHub.on('onBackground', () => {
-      this.stopGyroscope();
+      this.stopGyroscopeSafely();
+      this.releaseCamera();
     });
-    // 监听前台，重新恢复传感器（前提是已经同意过隐私）
+
+    // 监听前台，重新拉起
     this.getUIContext().getHostContext()?.eventHub.on('onForeground', () => {
       this.initGyroscope();
+      if (this.isPreviewing || this.previewSurfaceId) {
+        this.initCamera();
+      }
     });
 
     this.yoloDetector = new YoloDetector(context);
@@ -178,7 +185,6 @@ struct Index {
     });
   }
 
-  // 修复问题 2：确保同意后才开启
   private checkPrivacy(context: common.UIAbilityContext): void {
     try {
       this.privacyContext = context
@@ -221,21 +227,24 @@ struct Index {
 
   private initGyroscope(): void {
     try {
-      if (this.sensorCallback) return;
-      this.sensorCallback = (data: sensor.GyroscopeResponse) => {
+      const gyro = GyroManager.getInstance();
+      if (gyro.callback) return;
+
+      gyro.callback = (data: sensor.GyroscopeResponse) => {
         const angularVelocity = Math.sqrt(data.x * data.x + data.y * data.y + data.z * data.z);
         this.isPhoneStable = angularVelocity <= 0.8;
       };
-      sensor.on(sensor.SensorId.GYROSCOPE, this.sensorCallback, { interval: 100000000 });
+      sensor.on(sensor.SensorId.GYROSCOPE, gyro.callback, { interval: 100000000 });
     } catch (error) {}
   }
 
-  // 修复问题 1：退后台严格禁用传感器并置空
-  private stopGyroscope(): void {
+  // 【合规核心修复】
+  private stopGyroscopeSafely(): void {
     try {
-      if (this.sensorCallback) {
-        sensor.off(sensor.SensorId.GYROSCOPE, this.sensorCallback);
-        this.sensorCallback = null;
+      const gyro = GyroManager.getInstance();
+      if (gyro.callback) {
+        sensor.off(sensor.SensorId.GYROSCOPE, gyro.callback);
+        gyro.callback = null;
       }
     } catch (error) {}
   }
@@ -248,7 +257,7 @@ struct Index {
     SpeechManager.getInstance().shutdown();
     this.releaseCamera();
     if (this.yoloDetector) { this.yoloDetector.release(); this.yoloDetector = null; }
-    this.stopGyroscope();
+    this.stopGyroscopeSafely(); // 退出页面时也确保注销
   }
 
   async initCamera(): Promise<void> {
@@ -374,7 +383,6 @@ struct Index {
     try { vibrator.startVibration({ type: 'time', duration: duration }, { usage: 'notification' }).catch(() => {}); } catch (err) {}
   }
 
-  // 修复问题 4：必须用户主动点击后，才申请相机权限！绝不提前申请！
   private enterRecognition(): void {
     this.vibrate(60);
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -394,7 +402,7 @@ struct Index {
   }
 
   // ==========================================
-  // UI 代码原样保留
+  // UI 代码完全保持原样，一字未改
   // ==========================================
   @Builder
   buildCameraPage() {

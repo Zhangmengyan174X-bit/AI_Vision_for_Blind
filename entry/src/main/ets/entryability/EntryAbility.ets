@@ -1,6 +1,8 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { sensor } from '@kit.SensorServiceKit';
+import { GyroManager } from '../utils/GyroManager';
 
 const DOMAIN = 0x0000;
 
@@ -43,7 +45,15 @@ export default class EntryAbility extends UIAbility {
   }
 
   onBackground(): void {
-    // Ability has back to background
+    // 系统生命周期兜底
+    try {
+      const gyro = GyroManager.getInstance();
+      if (gyro.callback) {
+        sensor.off(sensor.SensorId.GYROSCOPE, gyro.callback);
+        gyro.callback = null; // 这里可以赋值，因为它是类实例的属性
+        hilog.info(DOMAIN, 'testTag', '强制关闭后台陀螺仪成功');
+      }
+    } catch (error) {}
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
   }
 }
