@@ -31,7 +31,7 @@ struct Index {
   private isModelReady: boolean = false;
   private speechTimer: number = -1;
   private isCameraInitializing: boolean = false;
-  private receiverOutput: camera.PreviewOutput | null = null; // 保存接收器输出
+  private receiverOutput: camera.PreviewOutput | null = null;
   private xComponentController: XComponentController = new XComponentController();
   private cameraManager: camera.CameraManager | null = null;
   private cameraInput: camera.CameraInput | null = null;
@@ -51,13 +51,11 @@ struct Index {
   private speakQueue: DetectedObject[] = [];
   private isSpeaking: boolean = false;
   private spokenHistory: Map<string, number> = new Map();
-  private lastClearHistoryTime: number = 0;
   private lastObjectState: Map<string, Map<string, number>> = new Map();
 
   private privacyContext: common.UIAbilityContext | null = null
   private privacyController: CustomDialogController | null = null
 
-  // 【新增】抽象出独立的优先级权重方法
   private getObjectPriority(obj: DetectedObject): number {
     const vehicleLabels = [
       '汽车', '摩托车', '自行车', '公交车', '卡车', '出租车', '厢式货车', '救护车', '车辆', '陆地交通工具'
@@ -68,16 +66,17 @@ struct Index {
     if (humanLabels.includes(obj.label)) return 2;
 
     const centerX = obj.box.left + obj.box.width / 2;
-    // 画面正前方
     if (centerX >= 0.3 && centerX <= 0.7) return 1;
     return 0;
   }
+
   private getObjectZone(obj: DetectedObject): string {
     const centerX = obj.box.left + obj.box.width / 2;
     if (centerX < 0.33) return 'L';
     if (centerX > 0.67) return 'R';
     return 'C';
   }
+
   onObjectDetected(objects: DetectedObject[]): void {
     if (objects.length === 0) return;
     const now = Date.now();
@@ -94,7 +93,6 @@ struct Index {
 
     if (validObjects.length === 0) return;
 
-    // 1. 冲撞检测（逻辑不变，已改为请注意安全）
     let hasDanger = false;
     let dangerSpeech = '';
 
@@ -124,11 +122,10 @@ struct Index {
 
       if (isAreaGrowingFast) {
         currentDangerCount = previousDangerCount + 1;
-
         const lastDangerTime = this.dangerHistory.get(trackKey) || 0;
         const canWarn = now - lastDangerTime > 5000;
 
-        if (currentDangerCount >= 2 && canWarn && !hasDanger) { // 加 !hasDanger
+        if (currentDangerCount >= 2 && canWarn && !hasDanger) {
           let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
           dangerSpeech = `警告！${pos}有${obj.label}快速靠近，请注意安全`;
           this.dangerHistory.set(trackKey, now);
@@ -142,7 +139,6 @@ struct Index {
       stateMap.set('time', now);
       stateMap.set('dangerCount', currentDangerCount);
       this.lastObjectState.set(trackKey, stateMap);
-      // 删除原来的 if (hasDanger) break;
     }
 
     if (hasDanger) {
@@ -150,12 +146,6 @@ struct Index {
       return;
     }
 
-    // 2. 消息过期清理（超过 2 秒的旧消息直接扔掉，不占用队列）
-    this.speakQueue = this.speakQueue.filter(obj => {
-      return obj.queuedAt !== undefined && (now - obj.queuedAt < 2000);
-    });
-
-    // 3. 普通目标入队（按类别 + 方位去重）
     for (let i = 0; i < validObjects.length; i++) {
       const obj = validObjects[i];
       const zone = this.getObjectZone(obj);
@@ -175,12 +165,11 @@ struct Index {
       if (!inQueue && (now - lastSpoken > 8000)) {
         const pos = zone === 'L' ? '左前方' : (zone === 'R' ? '右前方' : '正前方');
         obj.speechText = `${pos}有${obj.label}`;
-        obj.queuedAt = now; // 记录时间戳
+        obj.queuedAt = now;
         this.speakQueue.push(obj);
       }
     }
 
-    // 4. 排序并限制长度
     this.speakQueue.sort((a, b) => {
       const diff = this.getObjectPriority(b) - this.getObjectPriority(a);
       if (diff !== 0) return diff;
@@ -197,7 +186,6 @@ struct Index {
   private processQueue(): void {
     const now = Date.now();
 
-    // 【修复】每次准备播报前，先清理过期消息（超过 2 秒直接扔）
     this.speakQueue = this.speakQueue.filter(obj => {
       return obj.queuedAt !== undefined && (now - obj.queuedAt < 2000);
     });
@@ -226,8 +214,6 @@ struct Index {
   private handleDanger(dangerSpeech: string): void {
     this.speakQueue = [];
     this.isSpeaking = false;
-
-    // 【核心修复】清理旧定时器，彻底阻断普通队列
     this.clearSpeechTimer();
 
     SpeechManager.getInstance().stop();
@@ -250,7 +236,6 @@ struct Index {
     this.pageStack.replacePath({ name: 'Settings' });
   }
 
-  // 【新增】清理定时器的方法
   private clearSpeechTimer(): void {
     if (this.speechTimer !== -1) {
       clearTimeout(this.speechTimer);
@@ -266,7 +251,6 @@ struct Index {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.checkPrivacy(context);
 
-    // 【修改】提取回调函数，方便后续注销
     this.bgCallback = () => {
       this.isAppInBackground = true;
       this.stopSpeechWork();
@@ -284,7 +268,6 @@ struct Index {
       }
     };
 
-    // 注册监听
     this.getUIContext().getHostContext()?.eventHub.on('onBackground', this.bgCallback);
     this.getUIContext().getHostContext()?.eventHub.on('onForeground', this.fgCallback);
 
@@ -370,10 +353,9 @@ struct Index {
   }
 
   aboutToDisappear(): void {
-    // 注销事件监听，防止内存泄漏和重复触发
     if (this.bgCallback) this.getUIContext().getHostContext()?.eventHub.off('onBackground', this.bgCallback);
     if (this.fgCallback) this.getUIContext().getHostContext()?.eventHub.off('onForeground', this.fgCallback);
-    this.stopSpeechWork(); // 统一清理语音
+    this.stopSpeechWork();
     SpeechManager.getInstance().shutdown();
     this.releaseCamera();
     if (this.yoloDetector) { this.yoloDetector.release(); this.yoloDetector = null; }
@@ -383,10 +365,10 @@ struct Index {
   }
 
   async initCamera(): Promise<void> {
-    if (!this.isRecognitionPageActive || this.isAppInBackground || !this.previewSurfaceId || this.isCameraInitializing || this.isPreviewing) {
+    if (!this.isRecognitionPageActive || this.isAppInBackground || this.isPreviewing || this.isCameraInitializing) {
       return;
     }
-    if (!this.previewSurfaceId || this.isCameraInitializing || this.isPreviewing) return;
+    if (!this.previewSurfaceId) return;
 
     this.isCameraInitializing = true;
     try {
@@ -424,7 +406,6 @@ struct Index {
         });
       });
 
-      // 【新增】保存 receiverOutput 以便释放
       this.receiverOutput = this.cameraManager.createPreviewOutput(previewProfile, this.receiverSurfaceId);
       this.captureSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.Session;
       this.captureSession.beginConfig();
@@ -436,7 +417,7 @@ struct Index {
       this.isPreviewing = true;
     } catch (err) {
       console.error(`[Camera] 初始化失败: ${JSON.stringify(err)}`);
-      await this.releaseCamera(); // 失败时强制清理半初始化资源
+      await this.releaseCamera();
     } finally {
       this.isCameraInitializing = false;
     }
@@ -471,43 +452,30 @@ struct Index {
     if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) {
       return;
     }
-    if (!this.isModelReady || this.yoloDetector === null) return;
 
     let imageSource: image.ImageSource | null = null;
     let pixelMap: image.PixelMap | null = null;
 
     try {
       const component = await img.getComponent(image.ComponentType.JPEG);
+      if (!component || !component.byteBuffer) throw new Error('无法获取 JPEG 图像数据');
 
-      if (!component || !component.byteBuffer) {
-        throw new Error('无法获取 JPEG 图像数据');
-      }
-
-      // 【修复】去掉 NV21 强转，直接解码
       imageSource = image.createImageSource(component.byteBuffer);
+      if (!imageSource) throw new Error('ImageSource 创建失败');
 
-      if (!imageSource) {
-        throw new Error('ImageSource 创建失败');
-      }
-
-      // 【修复】明确要求输出 RGBA_8888
       pixelMap = await imageSource.createPixelMap({
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
         editable: true
       });
 
       const info = pixelMap.getImageInfoSync();
-      if (info.pixelFormat !== image.PixelMapFormat.RGBA_8888) {
-        throw new Error('PixelMap 不是 RGBA_8888');
-      }
+      if (info.pixelFormat !== image.PixelMapFormat.RGBA_8888) throw new Error('PixelMap 不是 RGBA_8888');
 
       const inputData = await this.preprocessImage(pixelMap);
-      if (inputData.length !== 3 * 640 * 640) {
-        throw new Error('模型输入长度错误');
-      }
-
+      if (inputData.length !== 3 * 640 * 640) throw new Error('模型输入长度错误');
 
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
+
       if (this.isRecognitionPageActive && !this.isAppInBackground && objects.length > 0) {
         this.onObjectDetected(objects);
       }
@@ -516,13 +484,8 @@ struct Index {
       const e = err as BusinessError;
       console.error(`[YOLO] 图像处理失败: code=${e.code}, message=${e.message}`);
     } finally {
-      // 【修复】严格等待释放完成，防止内存泄漏
-      if (pixelMap) {
-        try { await pixelMap.release(); } catch (e) {}
-      }
-      if (imageSource) {
-        try { await imageSource.release(); } catch (e) {}
-      }
+      if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
+      if (imageSource) { try { await imageSource.release(); } catch (e) {} }
     }
   }
 
@@ -556,7 +519,6 @@ struct Index {
 
     const result = new Float32Array(3 * planeSize);
 
-    // 强制转 NCHW
     for (let i = 0; i < planeSize; i++) {
       result[i] = rgba[i * 4] / 255.0;
       result[planeSize + i] = rgba[i * 4 + 1] / 255.0;
@@ -596,7 +558,7 @@ struct Index {
   }
 
   // ==========================================
-  // UI 代码完全保持原样，一字未改
+  // UI 代码原样保留
   // ==========================================
   @Builder
   buildCameraPage() {
@@ -622,7 +584,7 @@ struct Index {
               .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.28)', offsetX: 0, offsetY: 8 })
               .onClick(() => {
                 this.vibrate(60);
-                this.exitRecognition(); // 调用刚刚新增的方法
+                this.exitRecognition();
               })
               .accessibilityText('退出识别，返回设置页面')
           }.width('100%').padding({ left: 24, right: 24, top: 72, bottom: 34 })
@@ -730,21 +692,6 @@ struct Index {
   }
 
   @Builder
-  buildEntryCard(mark: string, title: string, subtitle: string, onTap: () => void) {
-    Row() {
-      Stack() {
-        Column().width(48).height(48).backgroundColor(AppColors.sageSoft).borderRadius(24)
-        Text(mark).fontSize(19).fontWeight(FontWeight.Bold).fontColor(AppColors.sageDeep)
-      }
-      Column() {
-        Text(title).fontSize(19).fontWeight(FontWeight.Bold).fontColor(AppColors.ink)
-        Text(subtitle).fontSize(14).fontColor(AppColors.ink).margin({ top: 6 })
-      }.alignItems(HorizontalAlign.Start).layoutWeight(1).margin({ left: 16 })
-      Text('›').fontSize(28).fontColor(AppColors.mist)
-    }.width('100%').padding(20).backgroundColor(AppColors.card).borderRadius(24).shadow(AppColors.shadowCard).margin({ top: 18 }).onClick(onTap).accessibilityGroup(true).accessibilityText(title + '，' + subtitle)
-  }
-
-  @Builder
   buildHelpPage() {
     NavDestination() {
       Scroll() {
@@ -778,6 +725,21 @@ struct Index {
         }.width('100%').padding({ left: 24, right: 24 })
       }.width('100%').height('100%').linearGradient({ angle: 160, colors: PAGE_GRADIENT })
     }.hideTitleBar(true).onShown(() => { this.speakHelpPage() }).onHidden(() => { SpeechManager.getInstance().stop() })
+  }
+
+  @Builder
+  buildEntryCard(mark: string, title: string, subtitle: string, onTap: () => void) {
+    Row() {
+      Stack() {
+        Column().width(48).height(48).backgroundColor(AppColors.sageSoft).borderRadius(24)
+        Text(mark).fontSize(19).fontWeight(FontWeight.Bold).fontColor(AppColors.sageDeep)
+      }
+      Column() {
+        Text(title).fontSize(19).fontWeight(FontWeight.Bold).fontColor(AppColors.ink)
+        Text(subtitle).fontSize(14).fontColor(AppColors.ink).margin({ top: 6 })
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1).margin({ left: 16 })
+      Text('›').fontSize(28).fontColor(AppColors.mist)
+    }.width('100%').padding(20).backgroundColor(AppColors.card).borderRadius(24).shadow(AppColors.shadowCard).margin({ top: 18 }).onClick(onTap).accessibilityGroup(true).accessibilityText(title + '，' + subtitle)
   }
 
   @Builder
