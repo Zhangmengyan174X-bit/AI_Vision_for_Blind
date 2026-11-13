@@ -20,10 +20,20 @@
         }
       },
       {
-        "name": "ohos.permission.VIBRATE"
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:vibrate_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       },
       {
-        "name": "ohos.permission.GYROSCOPE"
+        "name": "ohos.permission.GYROSCOPE",
+        "reason": "$string:gyro_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       }
     ],
     "abilities": [
