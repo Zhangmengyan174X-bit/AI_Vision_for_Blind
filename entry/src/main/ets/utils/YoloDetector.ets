@@ -237,9 +237,9 @@ export class YoloDetector {
     results.sort((a, b) => b.score - a.score);
 
 
-    // 【终极诊断】强行打印
+    // 【诊断日志】在控制台打印最高分的物体
     if (results.length > 0) {
-      console.info(`[探步测试] 识别到最高分：${results[0].label}，置信度：${results[0].score.toFixed(3)}`);
+      console.info(`[探步识别] 发现目标：${results[0].label}，置信度：${results[0].score.toFixed(3)}，本帧共发现：${results.length} 个候选`);
     }
 
     // 【性能优化】限制候选框数量，防止 CPU 卡顿
