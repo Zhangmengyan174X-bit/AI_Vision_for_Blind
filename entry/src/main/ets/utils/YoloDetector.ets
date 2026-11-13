@@ -237,13 +237,10 @@ export class YoloDetector {
     results.sort((a, b) => b.score - a.score);
 
 
-    results.sort((a, b) => b.score - a.score);
-
-
-    // 【诊断日志】打印前 5 个目标的类别和置信度
+    // 【临时诊断】打印前 5 个得分最高的目标
     if (results.length > 0) {
       let logStr = '=== YOLO 识别结果 ===\n';
-      const printCount = Math.min(results.length, 5); // 只打印前5个，防刷屏
+      const printCount = Math.min(results.length, 5);
       for (let k = 0; k < printCount; k++) {
         logStr += `[类别: ${results[k].label}, 置信度: ${results[k].score.toFixed(3)}]\n`;
       }
