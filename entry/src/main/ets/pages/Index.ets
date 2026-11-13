@@ -23,6 +23,15 @@ struct Index {
   @State private vibrationEnabled: boolean = true
   @State private voiceHintEnabled: boolean = true
 
+  private isAppInBackground: boolean = false;
+  private isRecognitionPageActive: boolean = false;
+  private bgCallback: (() => void) | null = null;
+  private fgCallback: (() => void) | null = null;
+  private dangerHistory: Map<string, number> = new Map();
+  private isModelReady: boolean = false;
+  private speechTimer: number = -1;
+  private isCameraInitializing: boolean = false;
+  private receiverOutput: camera.PreviewOutput | null = null; // 保存接收器输出
   private xComponentController: XComponentController = new XComponentController();
   private cameraManager: camera.CameraManager | null = null;
   private cameraInput: camera.CameraInput | null = null;
@@ -41,36 +50,51 @@ struct Index {
 
   private speakQueue: DetectedObject[] = [];
   private isSpeaking: boolean = false;
-  private spokenHistory: Set<number> = new Set();
+  private spokenHistory: Map<string, number> = new Map();
   private lastClearHistoryTime: number = 0;
   private lastObjectState: Map<string, Map<string, number>> = new Map();
 
   private privacyContext: common.UIAbilityContext | null = null
   private privacyController: CustomDialogController | null = null
 
+  // 【新增】抽象出独立的优先级权重方法
+  private getObjectPriority(obj: DetectedObject): number {
+    const vehicleLabels = [
+      '汽车', '摩托车', '自行车', '公交车', '卡车', '出租车', '厢式货车', '救护车', '车辆', '陆地交通工具'
+    ];
+    const humanLabels = ['人', '男人', '女人', '男孩', '女孩'];
+
+    if (vehicleLabels.includes(obj.label)) return 3;
+    if (humanLabels.includes(obj.label)) return 2;
+
+    const centerX = obj.box.left + obj.box.width / 2;
+    // 画面正前方
+    if (centerX >= 0.3 && centerX <= 0.7) return 1;
+    return 0;
+  }
+  private getObjectZone(obj: DetectedObject): string {
+    const centerX = obj.box.left + obj.box.width / 2;
+    if (centerX < 0.33) return 'L';
+    if (centerX > 0.67) return 'R';
+    return 'C';
+  }
   onObjectDetected(objects: DetectedObject[]): void {
     if (objects.length === 0) return;
     const now = Date.now();
 
-    if (now - this.lastClearHistoryTime > 10000) {
-      this.spokenHistory.clear();
-      this.lastClearHistoryTime = now;
-    }
-
     const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
     const validObjects = objects.filter(obj => {
       const isIgnored = ignoreLabels.includes(obj.label);
-      const isTooSmall = (obj.box.width * obj.box.height) < 0.03;
+      const isHeadphones = obj.labelId === 244;
+      const isTooSmall = !isHeadphones && (obj.box.width * obj.box.height) < 0.03;
       const aspectRatio = obj.box.width / obj.box.height;
-      const isWeirdShape = aspectRatio > 3 || aspectRatio < 0.33;
+      const isWeirdShape = !isHeadphones && (aspectRatio > 3 || aspectRatio < 0.33);
       return !isIgnored && !isTooSmall && !isWeirdShape;
     });
 
     if (validObjects.length === 0) return;
 
-    // ==========================================
-    // 1. 冲撞检测（基于边长增长率的轻量级防抖追踪）
-    // ==========================================
+    // 1. 冲撞检测（逻辑不变，已改为请注意安全）
     let hasDanger = false;
     let dangerSpeech = '';
 
@@ -79,7 +103,6 @@ struct Index {
       const currentArea = obj.box.width * obj.box.height;
       const centerX = obj.box.left + obj.box.width / 2;
 
-      // 生成轻量级 ID：类别 + 大致方位（防止同类多目标互相覆盖状态）
       const posX = centerX < 0.33 ? 'L' : (centerX > 0.67 ? 'R' : 'C');
       const trackKey = `${obj.label}_${posX}`;
 
@@ -91,26 +114,24 @@ struct Index {
         const timeDiff = now - (lastState.get('time') || 0);
         if (timeDiff > 0 && timeDiff < 1000) {
           const lastArea = lastState.get('area') || 0.01;
-          // 优化：用边长变化率代替面积，抗形变和透视干扰
-          const lastSize = Math.sqrt(lastArea);
-          const currentSize = Math.sqrt(currentArea);
-          growthRate = (currentSize - lastSize) / lastSize;
+          growthRate = (Math.sqrt(currentArea) - Math.sqrt(lastArea)) / Math.sqrt(lastArea);
           previousDangerCount = lastState.get('dangerCount') || 0;
         }
       }
 
-      // 边长暴增 30% 且具备一定体积
       const isAreaGrowingFast = (growthRate > 0.3 && currentArea > 0.08);
       let currentDangerCount = 0;
 
       if (isAreaGrowingFast) {
         currentDangerCount = previousDangerCount + 1;
 
-        // 连续 2 帧确认，才判定为冲撞
-        if (currentDangerCount >= 2) {
+        const lastDangerTime = this.dangerHistory.get(trackKey) || 0;
+        const canWarn = now - lastDangerTime > 5000;
+
+        if (currentDangerCount >= 2 && canWarn && !hasDanger) { // 加 !hasDanger
           let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
-          let dodgeDir = centerX < 0.33 ? '向右躲' : (centerX > 0.67 ? '向左躲' : '停步');
-          dangerSpeech = `警告！${pos}有${obj.label}冲过来，${dodgeDir}`;
+          dangerSpeech = `警告！${pos}有${obj.label}快速靠近，请注意安全`;
+          this.dangerHistory.set(trackKey, now);
           hasDanger = true;
           currentDangerCount = 0;
         }
@@ -121,8 +142,7 @@ struct Index {
       stateMap.set('time', now);
       stateMap.set('dangerCount', currentDangerCount);
       this.lastObjectState.set(trackKey, stateMap);
-
-      if (hasDanger) break;
+      // 删除原来的 if (hasDanger) break;
     }
 
     if (hasDanger) {
@@ -130,48 +150,74 @@ struct Index {
       return;
     }
 
-    // ==========================================
-    // 2. 普通目标入队与优先级
-    // ==========================================
+    // 2. 消息过期清理（超过 2 秒的旧消息直接扔掉，不占用队列）
+    this.speakQueue = this.speakQueue.filter(obj => {
+      return obj.queuedAt !== undefined && (now - obj.queuedAt < 2000);
+    });
+
+    // 3. 普通目标入队（按类别 + 方位去重）
     for (let i = 0; i < validObjects.length; i++) {
       const obj = validObjects[i];
+      const zone = this.getObjectZone(obj);
+      const key = `${obj.labelId}_${zone}`;
+
       let inQueue = false;
       for (let j = 0; j < this.speakQueue.length; j++) {
-        if (this.speakQueue[j].labelId === obj.labelId) {
+        const qObj = this.speakQueue[j];
+        if (qObj.labelId === obj.labelId && this.getObjectZone(qObj) === zone) {
           inQueue = true;
           break;
         }
       }
 
-      if (!this.spokenHistory.has(obj.labelId) && !inQueue) {
-        const centerX = obj.box.left + obj.box.width / 2;
-        let pos = '正前方';
-        if (centerX < 0.33) pos = '左前方';
-        else if (centerX > 0.67) pos = '右前方';
+      const lastSpoken = this.spokenHistory.get(key) || 0;
 
+      if (!inQueue && (now - lastSpoken > 8000)) {
+        const pos = zone === 'L' ? '左前方' : (zone === 'R' ? '右前方' : '正前方');
         obj.speechText = `${pos}有${obj.label}`;
+        obj.queuedAt = now; // 记录时间戳
         this.speakQueue.push(obj);
       }
     }
 
-    this.speakQueue.sort((a, b) => b.score - a.score);
+    // 4. 排序并限制长度
+    this.speakQueue.sort((a, b) => {
+      const diff = this.getObjectPriority(b) - this.getObjectPriority(a);
+      if (diff !== 0) return diff;
+      return b.score - a.score;
+    });
+
+    if (this.speakQueue.length > 3) {
+      this.speakQueue = this.speakQueue.slice(0, 3);
+    }
+
     this.processQueue();
   }
 
   private processQueue(): void {
+    const now = Date.now();
+
+    // 【修复】每次准备播报前，先清理过期消息（超过 2 秒直接扔）
+    this.speakQueue = this.speakQueue.filter(obj => {
+      return obj.queuedAt !== undefined && (now - obj.queuedAt < 2000);
+    });
+
     if (this.isSpeaking || this.speakQueue.length === 0) return;
 
     this.isSpeaking = true;
     const obj = this.speakQueue.shift()!;
-    this.spokenHistory.add(obj.labelId);
+
+    const key = `${obj.labelId}_${this.getObjectZone(obj)}`;
+    this.spokenHistory.set(key, Date.now());
 
     SpeechManager.getInstance().speak(obj.speechText!, this.getTtsSpeed());
 
-    // 优化 TTS 估算时长，区分语速
     const baseMs = this.speechSpeed === '慢' ? 350 : (this.speechSpeed === '快' ? 220 : 280);
     const duration = obj.speechText!.length * baseMs + 800;
 
-    setTimeout(() => {
+    this.clearSpeechTimer();
+    this.speechTimer = setTimeout(() => {
+      this.speechTimer = -1;
       this.isSpeaking = false;
       this.processQueue();
     }, duration);
@@ -180,16 +226,36 @@ struct Index {
   private handleDanger(dangerSpeech: string): void {
     this.speakQueue = [];
     this.isSpeaking = false;
-    SpeechManager.getInstance().stop();
 
-    // 危险警告强制标准语速
+    // 【核心修复】清理旧定时器，彻底阻断普通队列
+    this.clearSpeechTimer();
+
+    SpeechManager.getInstance().stop();
     SpeechManager.getInstance().speak(dangerSpeech, 1.0);
 
     this.isSpeaking = true;
-    setTimeout(() => {
+    this.speechTimer = setTimeout(() => {
+      this.speechTimer = -1;
       this.isSpeaking = false;
       this.processQueue();
     }, 2500);
+  }
+
+  private async exitRecognition(): Promise<void> {
+    this.isRecognitionPageActive = false;
+    this.stopSpeechWork();
+    this.lastObjectState.clear();
+    this.dangerHistory.clear();
+    await this.releaseCamera();
+    this.pageStack.replacePath({ name: 'Settings' });
+  }
+
+  // 【新增】清理定时器的方法
+  private clearSpeechTimer(): void {
+    if (this.speechTimer !== -1) {
+      clearTimeout(this.speechTimer);
+      this.speechTimer = -1;
+    }
   }
 
   aboutToAppear(): void {
@@ -200,20 +266,31 @@ struct Index {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.checkPrivacy(context);
 
-    this.getUIContext().getHostContext()?.eventHub.on('onBackground', () => {
+    // 【修改】提取回调函数，方便后续注销
+    this.bgCallback = () => {
+      this.isAppInBackground = true;
+      this.stopSpeechWork();
       this.stopGyroscopeSafely();
       this.releaseCamera();
-    });
+      this.lastObjectState.clear();
+      this.dangerHistory.clear();
+    };
 
-    this.getUIContext().getHostContext()?.eventHub.on('onForeground', () => {
+    this.fgCallback = () => {
+      this.isAppInBackground = false;
       this.initGyroscope();
-      if (this.isPreviewing || this.previewSurfaceId) {
+      if (this.isRecognitionPageActive && this.previewSurfaceId) {
         this.initCamera();
       }
-    });
+    };
+
+    // 注册监听
+    this.getUIContext().getHostContext()?.eventHub.on('onBackground', this.bgCallback);
+    this.getUIContext().getHostContext()?.eventHub.on('onForeground', this.fgCallback);
 
     this.yoloDetector = new YoloDetector(context);
     this.yoloDetector.loadModel().then((success: boolean) => {
+      this.isModelReady = success;
       console.info(success ? 'YOLO 模型加载成功' : 'YOLO 模型加载失败');
     });
   }
@@ -281,19 +358,37 @@ struct Index {
     } catch (error) {}
   }
 
+  private stopSpeechWork(): void {
+    this.clearSpeechTimer();
+    this.speakQueue = [];
+    this.isSpeaking = false;
+    SpeechManager.getInstance().stop();
+  }
+
   private inspectNNRT(): void {
     try { mindSporeLite.getAllNNRTDeviceDescriptions(); } catch (e) {}
   }
 
   aboutToDisappear(): void {
+    // 注销事件监听，防止内存泄漏和重复触发
+    if (this.bgCallback) this.getUIContext().getHostContext()?.eventHub.off('onBackground', this.bgCallback);
+    if (this.fgCallback) this.getUIContext().getHostContext()?.eventHub.off('onForeground', this.fgCallback);
+    this.stopSpeechWork(); // 统一清理语音
     SpeechManager.getInstance().shutdown();
     this.releaseCamera();
     if (this.yoloDetector) { this.yoloDetector.release(); this.yoloDetector = null; }
     this.stopGyroscopeSafely();
+    this.lastObjectState.clear();
+    this.spokenHistory.clear();
   }
 
   async initCamera(): Promise<void> {
-    if (!this.previewSurfaceId) return;
+    if (!this.isRecognitionPageActive || this.isAppInBackground || !this.previewSurfaceId || this.isCameraInitializing || this.isPreviewing) {
+      return;
+    }
+    if (!this.previewSurfaceId || this.isCameraInitializing || this.isPreviewing) return;
+
+    this.isCameraInitializing = true;
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       this.cameraManager = camera.getCameraManager(context);
@@ -329,79 +424,146 @@ struct Index {
         });
       });
 
-      const receiverOutput = this.cameraManager.createPreviewOutput(previewProfile, this.receiverSurfaceId);
+      // 【新增】保存 receiverOutput 以便释放
+      this.receiverOutput = this.cameraManager.createPreviewOutput(previewProfile, this.receiverSurfaceId);
       this.captureSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.Session;
       this.captureSession.beginConfig();
       this.captureSession.addInput(this.cameraInput);
       this.captureSession.addOutput(this.previewOutput);
-      this.captureSession.addOutput(receiverOutput);
+      this.captureSession.addOutput(this.receiverOutput);
       await this.captureSession.commitConfig();
       await this.captureSession.start();
       this.isPreviewing = true;
-    } catch (err) {}
+    } catch (err) {
+      console.error(`[Camera] 初始化失败: ${JSON.stringify(err)}`);
+      await this.releaseCamera(); // 失败时强制清理半初始化资源
+    } finally {
+      this.isCameraInitializing = false;
+    }
   }
 
   async releaseCamera(): Promise<void> {
-    try {
-      if (this.imageReceiver) { this.imageReceiver.off('imageArrival'); await this.imageReceiver.release(); this.imageReceiver = null; }
-      if (this.captureSession) { await this.captureSession.stop(); await this.captureSession.release(); this.captureSession = null; }
-      if (this.previewOutput) { await this.previewOutput.release(); this.previewOutput = null; }
-      if (this.cameraInput) { await this.cameraInput.close(); this.cameraInput = null; }
-      this.isPreviewing = false;
-    } catch (err) {}
+    if (this.imageReceiver) {
+      try { this.imageReceiver.off('imageArrival'); await this.imageReceiver.release(); } catch (e) {}
+      this.imageReceiver = null;
+    }
+    if (this.captureSession) {
+      try { await this.captureSession.stop(); } catch (e) {}
+      try { await this.captureSession.release(); } catch (e) {}
+      this.captureSession = null;
+    }
+    if (this.receiverOutput) {
+      try { await this.receiverOutput.release(); } catch (e) {}
+      this.receiverOutput = null;
+    }
+    if (this.previewOutput) {
+      try { await this.previewOutput.release(); } catch (e) {}
+      this.previewOutput = null;
+    }
+    if (this.cameraInput) {
+      try { await this.cameraInput.close(); } catch (e) {}
+      this.cameraInput = null;
+    }
+    this.isPreviewing = false;
   }
 
   async detectObject(img: image.Image): Promise<void> {
-    if (this.yoloDetector === null) return;
+    if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) {
+      return;
+    }
+    if (!this.isModelReady || this.yoloDetector === null) return;
+
     let imageSource: image.ImageSource | null = null;
     let pixelMap: image.PixelMap | null = null;
 
     try {
       const component = await img.getComponent(image.ComponentType.JPEG);
-      if (!component || !component.byteBuffer) return;
 
-      const sourceOptions: image.SourceOptions = {
-        sourcePixelFormat: image.PixelMapFormat.NV21,
-        sourceSize: { width: img.size.width, height: img.size.height },
-        sourceDensity: 120
-      };
+      if (!component || !component.byteBuffer) {
+        throw new Error('无法获取 JPEG 图像数据');
+      }
 
-      imageSource = image.createImageSource(component.byteBuffer, sourceOptions);
-      if (!imageSource) return;
-      pixelMap = await imageSource.createPixelMap();
+      // 【修复】去掉 NV21 强转，直接解码
+      imageSource = image.createImageSource(component.byteBuffer);
 
-      const inputData: Float32Array = await this.preprocessImage(pixelMap);
-      if (!inputData || inputData.length === 0) return;
+      if (!imageSource) {
+        throw new Error('ImageSource 创建失败');
+      }
+
+      // 【修复】明确要求输出 RGBA_8888
+      pixelMap = await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+        editable: true
+      });
+
+      const info = pixelMap.getImageInfoSync();
+      if (info.pixelFormat !== image.PixelMapFormat.RGBA_8888) {
+        throw new Error('PixelMap 不是 RGBA_8888');
+      }
+
+      const inputData = await this.preprocessImage(pixelMap);
+      if (inputData.length !== 3 * 640 * 640) {
+        throw new Error('模型输入长度错误');
+      }
+
 
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
-      if (objects.length > 0) this.onObjectDetected(objects);
-    } catch (err) {} finally {
-      if (pixelMap) pixelMap.release();
-      if (imageSource) imageSource.release();
+      if (this.isRecognitionPageActive && !this.isAppInBackground && objects.length > 0) {
+        this.onObjectDetected(objects);
+      }
+
+    } catch (err) {
+      const e = err as BusinessError;
+      console.error(`[YOLO] 图像处理失败: code=${e.code}, message=${e.message}`);
+    } finally {
+      // 【修复】严格等待释放完成，防止内存泄漏
+      if (pixelMap) {
+        try { await pixelMap.release(); } catch (e) {}
+      }
+      if (imageSource) {
+        try { await imageSource.release(); } catch (e) {}
+      }
     }
   }
 
   private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
-    const INPUT_SIZE = 640;
-    const defaultResult = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
+    const SIZE = 640;
+    const info = pixelMap.getImageInfoSync();
 
-    try {
-      const info = pixelMap.getImageInfoSync();
-      if (!info || !info.size) return defaultResult;
+    if (!info.size || info.size.width <= 0 || info.size.height <= 0) {
+      throw new Error('无效图像尺寸');
+    }
+    if (info.pixelFormat !== image.PixelMapFormat.RGBA_8888) {
+      throw new Error('输入像素格式错误');
+    }
 
-      await pixelMap.scale(INPUT_SIZE / info.size.width, INPUT_SIZE / info.size.height);
-      const buffer = new ArrayBuffer(INPUT_SIZE * INPUT_SIZE * 4);
-      await pixelMap.readPixelsToBuffer(buffer);
-      const rgba = new Uint8Array(buffer);
+    await pixelMap.scale(SIZE / info.size.width, SIZE / info.size.height);
 
-      const float32 = new Float32Array(1 * INPUT_SIZE * INPUT_SIZE * 3);
-      for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
-        float32[i * 3] = rgba[i * 4] / 255.0;
-        float32[i * 3 + 1] = rgba[i * 4 + 1] / 255.0;
-        float32[i * 3 + 2] = rgba[i * 4 + 2] / 255.0;
-      }
-      return float32;
-    } catch (err) { return defaultResult; }
+    const scaledInfo = pixelMap.getImageInfoSync();
+    if (scaledInfo.size.width !== SIZE || scaledInfo.size.height !== SIZE) {
+      throw new Error('Resize 后尺寸不正确');
+    }
+
+    const planeSize = SIZE * SIZE;
+    const byteLength = pixelMap.getPixelBytesNumber();
+    if (byteLength !== planeSize * 4) {
+      throw new Error(`RGBA 数据长度异常: ${byteLength}`);
+    }
+
+    const buffer = new ArrayBuffer(byteLength);
+    await pixelMap.readPixelsToBuffer(buffer);
+    const rgba = new Uint8Array(buffer);
+
+    const result = new Float32Array(3 * planeSize);
+
+    // 强制转 NCHW
+    for (let i = 0; i < planeSize; i++) {
+      result[i] = rgba[i * 4] / 255.0;
+      result[planeSize + i] = rgba[i * 4 + 1] / 255.0;
+      result[planeSize * 2 + i] = rgba[i * 4 + 2] / 255.0;
+    }
+
+    return result;
   }
 
   private getTtsSpeed(): number {
@@ -442,7 +604,11 @@ struct Index {
       Stack() {
         XComponent({ id: 'camera_preview', type: XComponentType.SURFACE, controller: this.xComponentController })
           .width('100%').height('100%').renderFit(RenderFit.RESIZE_COVER)
-          .onLoad(() => { this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId(); this.initCamera(); })
+          .onLoad(() => {
+            this.isRecognitionPageActive = true;
+            this.previewSurfaceId = this.xComponentController.getXComponentSurfaceId();
+            this.initCamera();
+          })
           .accessibilityText('相机取景画面')
         Column() {
           Row() {
@@ -454,7 +620,10 @@ struct Index {
             Button('退出识别').width('100%').height(72).fontSize(24).fontWeight(FontWeight.Bold).fontColor(AppColors.white)
               .backgroundColor(AppColors.overlayDeep).borderRadius(36).border({ width: 1, color: 'rgba(255, 255, 255, 0.22)' })
               .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.28)', offsetX: 0, offsetY: 8 })
-              .onClick(() => { this.vibrate(60); this.pageStack.replacePath({ name: 'Settings' }); })
+              .onClick(() => {
+                this.vibrate(60);
+                this.exitRecognition(); // 调用刚刚新增的方法
+              })
               .accessibilityText('退出识别，返回设置页面')
           }.width('100%').padding({ left: 24, right: 24, top: 72, bottom: 34 })
           .linearGradient({ angle: 180, colors: [['rgba(48, 54, 58, 0)', 0.0], ['rgba(48, 54, 58, 0.55)', 1.0]] })
