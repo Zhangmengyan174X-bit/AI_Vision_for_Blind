@@ -6,7 +6,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 
 const NUM_BOXES = 8400;
 const NUM_CLASSES = 601;
-const CONF_THRESHOLD = 0.35;
+const CONF_THRESHOLD = 0.2;
 
 const OIV7_LABELS: string[] = [
   '手风琴', '胶带', '飞行器', '飞机', '闹钟', '羊驼', '救护车', '动物', '蚂蚁', '羚羊',
@@ -239,6 +239,7 @@ export class YoloDetector {
 
     results.sort((a, b) => b.score - a.score);
 
+
     // 【诊断日志】打印前 5 个目标的类别和置信度
     if (results.length > 0) {
       let logStr = '=== YOLO 识别结果 ===\n';
@@ -248,8 +249,6 @@ export class YoloDetector {
       }
       hilog.info(0xFF00, 'YOLO_DEBUG', logStr);
     }
-
-
 
     // 【性能优化】限制候选框数量，防止 CPU 卡顿
     const candidates = results.slice(0, 300);
