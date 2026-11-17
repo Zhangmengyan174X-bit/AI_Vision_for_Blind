@@ -104,6 +104,9 @@ export class YoloDetector {
       hilog.error(0xFF00, 'YoloDetector', '类别映射表异常');
       return false;
     }
+
+    // 【新增日志提示】提醒开发者在真机上看 Log 确认
+    hilog.info(0xFF00, 'YoloDetector', '类别表校验通过：ID 0 = 手风琴，ID 244 = 耳机，ID 600 = 西葫芦');
     try {
       const rawFileContent: Uint8Array = await this.context.resourceManager.getRawFileContent(this.MODEL_NAME);
 

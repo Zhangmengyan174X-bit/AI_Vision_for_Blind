@@ -77,135 +77,155 @@ struct Index {
     return 'C';
   }
 
-  onObjectDetected(objects: DetectedObject[]): void {
-    if (objects.length === 0) return;
-    const now = Date.now();
+ onObjectDetected(objects: DetectedObject[]): void {
+  // 注意：这里去掉了 objects.length === 0 的 return，为了让空帧也能清理状态
+  const now = Date.now();
 
-    const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
+  const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
 
-    // 1. 核心高危白名单（必须报具体名字）
-    const allowedLabels = [
-      '人', '男人', '女人', '男孩', '女孩',
-      '汽车', '自行车', '摩托车', '公交车', '卡车', '出租车', '厢式货车', '救护车', '车辆', '陆地交通工具',
-      '椅子', '沙发', '餐桌', '门', '楼梯', '停车标志', '交通标志', '交通信号灯', '红绿灯', '长椅'
-    ];
+  // 核心高危白名单
+  const allowedLabels = [
+    '人', '男人', '女人', '男孩', '女孩',
+    '汽车', '自行车', '摩托车', '公交车', '卡车', '出租车', '厢式货车', '救护车', '车辆', '陆地交通工具',
+    '椅子', '沙发', '餐桌', '门', '楼梯', '停车标志', '交通标志', '交通信号灯', '红绿灯', '长椅'
+  ];
 
-    const validObjects = objects.filter(obj => {
-      const isIgnored = ignoreLabels.includes(obj.label);
-      const isTooSmall = (obj.box.width * obj.box.height) < 0.03;
-      const aspectRatio = obj.box.width / obj.box.height;
-      const isWeirdShape = aspectRatio > 3 || aspectRatio < 0.33;
+  const validObjects: DetectedObject[] = [];
 
-      // 【第一条路】：高置信度白名单，报具体名字
-      if (allowedLabels.includes(obj.label) && !isTooSmall && !isWeirdShape) {
-        return true;
-      }
+  for (let i = 0; i < objects.length; i++) {
+    const obj = objects[i];
+    if (ignoreLabels.includes(obj.label)) continue;
 
-      // 【第二条路】：兜底逻辑，只要框够大（大于 8%），无论它认成了什么，统一当成“不明障碍物”
-      if (obj.box.width * obj.box.height > 0.08) {
-        obj.label = '不明障碍物';
-        obj.labelId = 9999; // 给个特殊的 ID，方便去重
-        obj.score = 0.5; // 强制拉高置信度
-        return true;
-      }
+    const area = obj.box.width * obj.box.height;
+    const aspectRatio = obj.box.width / obj.box.height;
+    const centerX = obj.box.left + obj.box.width / 2;
+    const centerY = obj.box.top + obj.box.height / 2;
 
-      return !isIgnored && !isTooSmall && !isWeirdShape;
-    });
-
-    if (validObjects.length === 0) return;
-
-    let hasDanger = false;
-    let dangerSpeech = '';
-
-    for (let i = 0; i < validObjects.length; i++) {
-      const obj = validObjects[i];
-      const currentArea = obj.box.width * obj.box.height;
-      const centerX = obj.box.left + obj.box.width / 2;
-
-      const posX = centerX < 0.33 ? 'L' : (centerX > 0.67 ? 'R' : 'C');
-      const trackKey = `${obj.label}_${posX}`;
-
-      const lastState = this.lastObjectState.get(trackKey);
-      let growthRate = 0;
-      let previousDangerCount = 0;
-
-      if (lastState && this.isPhoneStable) {
-        const timeDiff = now - (lastState.get('time') || 0);
-        if (timeDiff > 0 && timeDiff < 1000) {
-          const lastArea = lastState.get('area') || 0.01;
-          growthRate = (Math.sqrt(currentArea) - Math.sqrt(lastArea)) / Math.sqrt(lastArea);
-          previousDangerCount = lastState.get('dangerCount') || 0;
-        }
-      }
-
-      const isAreaGrowingFast = (growthRate > 0.3 && currentArea > 0.08);
-      let currentDangerCount = 0;
-
-      // 冲撞报警只针对白名单里的高危目标
-      const isDangerousTarget = ['人', '男人', '女人', '男孩', '女孩', '汽车', '自行车', '摩托车', '公交车', '卡车', '出租车', '厢式货车'].includes(obj.label);
-
-      if (isAreaGrowingFast && isDangerousTarget) {
-        currentDangerCount = previousDangerCount + 1;
-        const lastDangerTime = this.dangerHistory.get(trackKey) || 0;
-        const canWarn = now - lastDangerTime > 5000;
-
-        if (currentDangerCount >= 2 && canWarn && !hasDanger) {
-          let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
-          dangerSpeech = `警告！${pos}有${obj.label}快速靠近，请注意安全`;
-          this.dangerHistory.set(trackKey, now);
-          hasDanger = true;
-          currentDangerCount = 0;
-        }
-      }
-
-      const stateMap = new Map<string, number>();
-      stateMap.set('area', currentArea);
-      stateMap.set('time', now);
-      stateMap.set('dangerCount', currentDangerCount);
-      this.lastObjectState.set(trackKey, stateMap);
+    // 1. 一级：高置信度白名单（≥0.45）
+    if (allowedLabels.includes(obj.label) && obj.score >= 0.45 && area >= 0.01) {
+      validObjects.push(obj);
+      continue;
     }
 
-    if (hasDanger) {
-      this.handleDanger(dangerSpeech);
-      return;
+    // 2. 二级：中置信度白名单（0.25～0.45），暂时放行交由后续处理（或者你也可以让它们走兜底逻辑）
+    if (allowedLabels.includes(obj.label) && obj.score >= 0.25 && area >= 0.01) {
+      validObjects.push(obj);
+      continue;
     }
 
-    for (let i = 0; i < validObjects.length; i++) {
-      const obj = validObjects[i];
-      const zone = this.getObjectZone(obj);
-      const key = `${obj.labelId}_${zone}`;
+    // 3. 三级：低置信度/非白名单的兜底（必须满足：面积大且位置在画面中下方）
+    const inCenter = centerX > 0.2 && centerX < 0.8;
+    const inLowerArea = centerY > 0.35;
 
-      let inQueue = false;
-      for (let j = 0; j < this.speakQueue.length; j++) {
-        const qObj = this.speakQueue[j];
-        if (qObj.labelId === obj.labelId && this.getObjectZone(qObj) === zone) {
-          inQueue = true;
-          break;
-        }
-      }
-
-      const lastSpoken = this.spokenHistory.get(key) || 0;
-
-      if (!inQueue && (now - lastSpoken > 8000)) {
-        const pos = zone === 'L' ? '左前方' : (zone === 'R' ? '右前方' : '正前方');
-        obj.speechText = `${pos}有${obj.label}`;
-        obj.queuedAt = now;
-        this.speakQueue.push(obj);
-      }
+    if (obj.score >= 0.10 && area >= 0.08 && inCenter && inLowerArea) {
+      // 在保证原始分数和 labelId 不变的情况下，仅仅把名字改掉用于播报
+      obj.label = '不明障碍物';
+      validObjects.push(obj);
     }
-
-    this.speakQueue.sort((a, b) => {
-      const diff = this.getObjectPriority(b) - this.getObjectPriority(a);
-      if (diff !== 0) return diff;
-      return b.score - a.score;
-    });
-
-    if (this.speakQueue.length > 3) {
-      this.speakQueue = this.speakQueue.slice(0, 3);
-    }
-
-    this.processQueue();
   }
+
+  if (validObjects.length === 0) {
+    // 即使没东西，也要更新历史状态让旧目标过期
+    this.processQueue();
+    return;
+  }
+
+  let hasDanger = false;
+  let dangerSpeech = '';
+
+  for (let i = 0; i < validObjects.length; i++) {
+    const obj = validObjects[i];
+    const currentArea = obj.box.width * obj.box.height;
+    const centerX = obj.box.left + obj.box.width / 2;
+
+    const posX = centerX < 0.33 ? 'L' : (centerX > 0.67 ? 'R' : 'C');
+    const trackKey = `${obj.label}_${posX}`;
+
+    const lastState = this.lastObjectState.get(trackKey);
+    let growthRate = 0;
+    let previousDangerCount = 0;
+
+    if (lastState && this.isPhoneStable) {
+      const timeDiff = now - (lastState.get('time') || 0);
+      if (timeDiff > 0 && timeDiff < 1000) {
+        const lastArea = lastState.get('area') || 0.01;
+        growthRate = (Math.sqrt(currentArea) - Math.sqrt(lastArea)) / Math.sqrt(lastArea);
+        previousDangerCount = lastState.get('dangerCount') || 0;
+      }
+    }
+
+    const isAreaGrowingFast = (growthRate > 0.3 && currentArea > 0.08);
+    let currentDangerCount = 0;
+
+    // 冲撞报警只针对高危目标，且绝不对“不明障碍物”报警，防止乱停步
+    const isDangerousTarget = ['人', '汽车', '自行车', '摩托车', '公交车', '卡车'].includes(obj.label);
+
+    if (isAreaGrowingFast && isDangerousTarget) {
+      currentDangerCount = previousDangerCount + 1;
+      const lastDangerTime = this.dangerHistory.get(trackKey) || 0;
+      const canWarn = now - lastDangerTime > 5000;
+
+      if (currentDangerCount >= 2 && canWarn && !hasDanger) {
+        let pos = centerX < 0.33 ? '左前方' : (centerX > 0.67 ? '右前方' : '正前方');
+        dangerSpeech = `警告！${pos}有${obj.label}快速靠近，请注意安全`;
+        this.dangerHistory.set(trackKey, now);
+        hasDanger = true;
+        currentDangerCount = 0;
+      }
+    }
+
+    const stateMap = new Map<string, number>();
+    stateMap.set('area', currentArea);
+    stateMap.set('time', now);
+    stateMap.set('dangerCount', currentDangerCount);
+    this.lastObjectState.set(trackKey, stateMap);
+  }
+
+  if (hasDanger) {
+    this.handleDanger(dangerSpeech);
+    return;
+  }
+
+  // 队列入队逻辑（保留了原有的方位去重）
+  for (let i = 0; i < validObjects.length; i++) {
+    const obj = validObjects[i];
+    const zone = this.getObjectZone(obj);
+    // 重要：如果是不明障碍物，因为 labelId 没变，为了防重复，我们统一使用 '9999' 作为去重依据
+    const keyId = obj.label === '不明障碍物' ? 9999 : obj.labelId;
+    const key = `${keyId}_${zone}`;
+
+    let inQueue = false;
+    for (let j = 0; j < this.speakQueue.length; j++) {
+      const qObj = this.speakQueue[j];
+      const qKeyId = qObj.label === '不明障碍物' ? 9999 : qObj.labelId;
+      if (qKeyId === keyId && this.getObjectZone(qObj) === zone) {
+        inQueue = true;
+        break;
+      }
+    }
+
+    const lastSpoken = this.spokenHistory.get(key) || 0;
+
+    if (!inQueue && (now - lastSpoken > 8000)) {
+      const pos = zone === 'L' ? '左前方' : (zone === 'R' ? '右前方' : '正前方');
+      obj.speechText = `${pos}有${obj.label}`;
+      obj.queuedAt = now;
+      this.speakQueue.push(obj);
+    }
+  }
+
+  this.speakQueue.sort((a, b) => {
+    const diff = this.getObjectPriority(b) - this.getObjectPriority(a);
+    if (diff !== 0) return diff;
+    return b.score - a.score;
+  });
+
+  if (this.speakQueue.length > 3) {
+    this.speakQueue = this.speakQueue.slice(0, 3);
+  }
+
+  this.processQueue();
+}
 
   private processQueue(): void {
     const now = Date.now();
@@ -481,32 +501,46 @@ struct Index {
     let pixelMap: image.PixelMap | null = null;
 
     try {
+      // 1. 获取 JPEG 数据
       const component = await img.getComponent(image.ComponentType.JPEG);
-      if (!component || !component.byteBuffer) throw new Error('无法获取 JPEG 图像数据');
+      if (!component || !component.byteBuffer) {
+        console.error('[YOLO] 获取 JPEG 数据失败，跳过此帧');
+        return;
+      }
 
+      // 2. 创建 ImageSource（这里去掉带 options 的骚操作，用最稳的默认解码）
       imageSource = image.createImageSource(component.byteBuffer);
-      if (!imageSource) throw new Error('ImageSource 创建失败');
+      if (!imageSource) {
+        console.error('[YOLO] ImageSource 创建失败');
+        return;
+      }
 
-      pixelMap = await imageSource.createPixelMap({
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-        editable: true
-      });
+      // 3. 解码成 PixelMap
+      pixelMap = await imageSource.createPixelMap();
+      if (!pixelMap) {
+        console.error('[YOLO] PixelMap 创建失败');
+        return;
+      }
 
-      const info = pixelMap.getImageInfoSync();
-      if (info.pixelFormat !== image.PixelMapFormat.RGBA_8888) throw new Error('PixelMap 不是 RGBA_8888');
-
+      // 4. 预处理并推理
       const inputData = await this.preprocessImage(pixelMap);
-      if (inputData.length !== 3 * 640 * 640) throw new Error('模型输入长度错误');
+
+      // 如果预处理失败，返回的是全 0 数组，我们这里稍微加个判断
+      if (inputData.length !== 3 * 640 * 640) {
+        console.error('[YOLO] 预处理长度错误，跳过此帧');
+        return;
+      }
 
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
 
-      if (this.isRecognitionPageActive && !this.isAppInBackground && objects.length > 0) {
+      // 【修复】即使 objects 为空（空帧），也要传给逻辑处理，让旧目标消失
+      if (this.isRecognitionPageActive && !this.isAppInBackground) {
         this.onObjectDetected(objects);
       }
 
     } catch (err) {
-      const e = err as BusinessError;
-      console.error(`[YOLO] 图像处理失败: code=${e.code}, message=${e.message}`);
+      // 【终极修复】把错误完整打印出来，再也不会是 undefined 了
+      console.error(`[YOLO] 真实崩溃原因: ${JSON.stringify(err)}`);
     } finally {
       if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
       if (imageSource) { try { await imageSource.release(); } catch (e) {} }
@@ -516,7 +550,6 @@ struct Index {
   private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
     const SIZE = 640;
     const info = pixelMap.getImageInfoSync();
-
     if (!info.size || info.size.width <= 0 || info.size.height <= 0) {
       throw new Error('无效图像尺寸');
     }
@@ -524,29 +557,63 @@ struct Index {
       throw new Error('输入像素格式错误');
     }
 
-    await pixelMap.scale(SIZE / info.size.width, SIZE / info.size.height);
+    // 【Letterbox 逻辑】：保持长宽比，空缺处用灰边填充（114,114,114）
+    const scale = Math.min(SIZE / info.size.width, SIZE / info.size.height);
+    const newWidth = Math.floor(info.size.width * scale);
+    const newHeight = Math.floor(info.size.height * scale);
 
-    const scaledInfo = pixelMap.getImageInfoSync();
-    if (scaledInfo.size.width !== SIZE || scaledInfo.size.height !== SIZE) {
-      throw new Error('Resize 后尺寸不正确');
+    // 1. 先缩放到目标尺寸（保持比例）
+    await pixelMap.scale(scale, scale);
+
+    // 【新增校验】确保缩放后的尺寸是我们预期的尺寸
+    const actualInfo = pixelMap.getImageInfoSync();
+    if (actualInfo.size.width !== newWidth || actualInfo.size.height !== newHeight) {
+      throw new Error(`Letterbox 缩放尺寸异常: ${actualInfo.size.width}x${actualInfo.size.height}, 预期: ${newWidth}x${newHeight}`);
     }
 
-    const planeSize = SIZE * SIZE;
-    const byteLength = pixelMap.getPixelBytesNumber();
-    if (byteLength !== planeSize * 4) {
-      throw new Error(`RGBA 数据长度异常: ${byteLength}`);
-    }
-
-    const buffer = new ArrayBuffer(byteLength);
-    await pixelMap.readPixelsToBuffer(buffer);
+    // 2. 创建一个 640x640 的纯灰背景（114号灰是 YOLO 标准）
+    const buffer = new ArrayBuffer(SIZE * SIZE * 4);
     const rgba = new Uint8Array(buffer);
+    for (let i = 0; i < SIZE * SIZE; i++) {
+      rgba[i * 4] = 114;     // R
+      rgba[i * 4 + 1] = 114; // G
+      rgba[i * 4 + 2] = 114; // B
+      rgba[i * 4 + 3] = 255; // A
+    }
 
+    // 3. 把缩放后的图贴到灰色背景中间（这里为了 ArkTS 稳定性，直接用像素拷贝法，虽然慢一点但绝对准）
+    // 因为鸿蒙的 PixelMap 没有直接的 Canvas 画图 API，我们直接通过 NCHW 的写入逻辑进行偏移
+    const planeSize = SIZE * SIZE;
     const result = new Float32Array(3 * planeSize);
 
+    // 默认初始化为灰色（114/255）
+    const grayValue = 114 / 255.0;
     for (let i = 0; i < planeSize; i++) {
-      result[i] = rgba[i * 4] / 255.0;
-      result[planeSize + i] = rgba[i * 4 + 1] / 255.0;
-      result[planeSize * 2 + i] = rgba[i * 4 + 2] / 255.0;
+      result[i] = grayValue;
+      result[planeSize + i] = grayValue;
+      result[planeSize * 2 + i] = grayValue;
+    }
+
+    // 读取缩放后的像素
+    const scaledByteLength = newWidth * newHeight * 4;
+    const scaledBuffer = new ArrayBuffer(scaledByteLength);
+    await pixelMap.readPixelsToBuffer(scaledBuffer);
+    const scaledRgba = new Uint8Array(scaledBuffer);
+
+    // 计算贴图偏移量（居中）
+    const offsetX = Math.floor((SIZE - newWidth) / 2);
+    const offsetY = Math.floor((SIZE - newHeight) / 2);
+
+    // 把新图拷进 NCHW 数组
+    for (let y = 0; y < newHeight; y++) {
+      for (let x = 0; x < newWidth; x++) {
+        const srcIdx = (y * newWidth + x) * 4;
+        const dstIdx = (y + offsetY) * SIZE + (x + offsetX);
+
+        result[dstIdx] = scaledRgba[srcIdx] / 255.0;
+        result[planeSize + dstIdx] = scaledRgba[srcIdx + 1] / 255.0;
+        result[planeSize * 2 + dstIdx] = scaledRgba[srcIdx + 2] / 255.0;
+      }
     }
 
     return result;
