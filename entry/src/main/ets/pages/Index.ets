@@ -82,12 +82,33 @@ struct Index {
     const now = Date.now();
 
     const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
+
+    // 1. 核心高危白名单（必须报具体名字）
+    const allowedLabels = [
+      '人', '男人', '女人', '男孩', '女孩',
+      '汽车', '自行车', '摩托车', '公交车', '卡车', '出租车', '厢式货车', '救护车', '车辆', '陆地交通工具',
+      '椅子', '沙发', '餐桌', '门', '楼梯', '停车标志', '交通标志', '交通信号灯', '红绿灯', '长椅'
+    ];
+
     const validObjects = objects.filter(obj => {
       const isIgnored = ignoreLabels.includes(obj.label);
-      const isHeadphones = obj.labelId === 244;
-      const isTooSmall = !isHeadphones && (obj.box.width * obj.box.height) < 0.03;
+      const isTooSmall = (obj.box.width * obj.box.height) < 0.03;
       const aspectRatio = obj.box.width / obj.box.height;
-      const isWeirdShape = !isHeadphones && (aspectRatio > 3 || aspectRatio < 0.33);
+      const isWeirdShape = aspectRatio > 3 || aspectRatio < 0.33;
+
+      // 【第一条路】：高置信度白名单，报具体名字
+      if (allowedLabels.includes(obj.label) && !isTooSmall && !isWeirdShape) {
+        return true;
+      }
+
+      // 【第二条路】：兜底逻辑，只要框够大（大于 8%），无论它认成了什么，统一当成“不明障碍物”
+      if (obj.box.width * obj.box.height > 0.08) {
+        obj.label = '不明障碍物';
+        obj.labelId = 9999; // 给个特殊的 ID，方便去重
+        obj.score = 0.5; // 强制拉高置信度
+        return true;
+      }
+
       return !isIgnored && !isTooSmall && !isWeirdShape;
     });
 
@@ -120,7 +141,10 @@ struct Index {
       const isAreaGrowingFast = (growthRate > 0.3 && currentArea > 0.08);
       let currentDangerCount = 0;
 
-      if (isAreaGrowingFast) {
+      // 冲撞报警只针对白名单里的高危目标
+      const isDangerousTarget = ['人', '男人', '女人', '男孩', '女孩', '汽车', '自行车', '摩托车', '公交车', '卡车', '出租车', '厢式货车'].includes(obj.label);
+
+      if (isAreaGrowingFast && isDangerousTarget) {
         currentDangerCount = previousDangerCount + 1;
         const lastDangerTime = this.dangerHistory.get(trackKey) || 0;
         const canWarn = now - lastDangerTime > 5000;
