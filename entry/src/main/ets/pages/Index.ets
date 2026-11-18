@@ -470,17 +470,27 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
       await this.cameraInput.open();
 
       const outputCapability = this.cameraManager.getSupportedOutputCapability(backCamera, camera.SceneMode.NORMAL_PHOTO);
+
+      // 【核心修复】寻找最接近 640x480 或 1280x720 的尺寸，而不是找最大的！
       let previewProfile = outputCapability.previewProfiles[0];
+      let minDiff = Math.abs(previewProfile.size.width - 1280) + Math.abs(previewProfile.size.height - 720);
+
       for (let i = 1; i < outputCapability.previewProfiles.length; i++) {
         const p = outputCapability.previewProfiles[i];
-        if (p.size.width * p.size.height > previewProfile.size.width * previewProfile.size.height) previewProfile = p;
+        const diff = Math.abs(p.size.width - 1280) + Math.abs(p.size.height - 720);
+        if (diff < minDiff) {
+          minDiff = diff;
+          previewProfile = p;
+        }
       }
 
+      console.info(`[Camera] 最终选定的尺寸: ${previewProfile.size.width}x${previewProfile.size.height}`);
+
       this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, this.previewSurfaceId);
+
+      // 严格使用匹配的尺寸来创建接收器
       const receiverSize: image.Size = { width: previewProfile.size.width, height: previewProfile.size.height };
-      // 【核心修复】强制 ImageReceiver 输出 640x640 的小图，大幅降低数据量和解码压力
-      const smallSize: image.Size = { width: 640, height: 640 };
-      this.imageReceiver = image.createImageReceiver(smallSize, image.ImageFormat.JPEG, 8);
+      this.imageReceiver = image.createImageReceiver(receiverSize, image.ImageFormat.JPEG, 8);
       this.receiverSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
 
       this.imageReceiver.on('imageArrival', () => {
@@ -543,60 +553,57 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
       return;
     }
 
+    let imageSource: image.ImageSource | null = null;
     let pixelMap: image.PixelMap | null = null;
 
     try {
-      // 1. 获取 JPEG 数据（这是相机流给的标准接口）
       const component = await img.getComponent(image.ComponentType.JPEG);
-      if (!component || !component.byteBuffer) {
-        console.warn('[YOLO] 获取 JPEG 数据为空，跳过');
-        return;
+      if (!component || !component.byteBuffer) return;
+
+      const buffer = component.byteBuffer;
+
+      // 【新增日志】检查 JPEG 的头和尾，确认数据是不是半截的
+      if (buffer.byteLength > 0) {
+        const bytes = new Uint8Array(buffer);
+        const len = bytes.length;
+        const header = `${bytes[0].toString(16)} ${bytes[1].toString(16)}`;
+        console.info(`[YOLO] JPEG长度=${len}, 头=${header}`);
+        if (len < 10) {
+          console.warn('[YOLO] 数据太短，直接丢弃');
+          return;
+        }
       }
 
-      // 2. 【关键修复】直接使用 nextImage 的尺寸和官方推荐的 SourceOptions
-      const sourceOptions: image.SourceOptions = {
-        sourceDensity: 120,
-        sourcePixelFormat: image.PixelMapFormat.RGBA_8888, // 强制 RGBA
-        sourceSize: { width: img.size.width, height: img.size.height }
-      };
+      // 【核心修复1】复制一份 buffer，防止异步解码时被相机底层覆盖
+      const jpegData = buffer.slice(0);
+      imageSource = image.createImageSource(jpegData);
+      if (!imageSource) return;
 
-      // 3. 用官方推荐的方式创建 ImageSource
-      const imageSource = image.createImageSource(component.byteBuffer, sourceOptions);
-      if (!imageSource) {
-        console.error('[YOLO] ImageSource 创建失败');
-        return;
-      }
-
-      // 4. 解码（这里如果数据真的坏了，会抛异常，被下面的 catch 接住）
-      pixelMap = await imageSource.createPixelMap({
+      // 【核心修复2】解码时直接指定 640x640，减轻 CPU 缩放压力
+      const decodingOptions: image.DecodingOptions = {
+        desiredSize: { width: 640, height: 640 },
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
         editable: true
-      });
+      };
 
-      if (!pixelMap) {
-        console.error('[YOLO] PixelMap 创建失败');
-        return;
-      }
+      pixelMap = await imageSource.createPixelMap(decodingOptions);
+      if (!pixelMap) return;
 
-      // 5. 预处理并推理
       const inputData = await this.preprocessImage(pixelMap);
-      if (inputData.length !== 3 * 640 * 640) {
-        console.error('[YOLO] 预处理长度错误');
-        return;
-      }
+      if (inputData.length !== 3 * 640 * 640) return;
 
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
 
-      // 6. 传给业务逻辑（注意：这里我们不再用 objects.length > 0 拦截，让空帧也能进去清理状态）
       if (this.isRecognitionPageActive && !this.isAppInBackground) {
         this.onObjectDetected(objects);
       }
 
     } catch (err) {
-      // 捕获解码异常，打印详细原因
+      // 打印最真实的崩溃原因
       console.error(`[YOLO] 图像处理崩溃: ${JSON.stringify(err)}`);
     } finally {
       if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
+      if (imageSource) { try { await imageSource.release(); } catch (e) {} }
     }
   }
 
