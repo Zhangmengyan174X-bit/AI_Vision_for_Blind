@@ -6,7 +6,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 
 const NUM_BOXES = 8400;
 const NUM_CLASSES = 601;
-const CONF_THRESHOLD = 0.1;
+const CONF_THRESHOLD = 0.03;
 
 const OIV7_LABELS: string[] = [
   '手风琴', '胶带', '飞行器', '飞机', '闹钟', '羊驼', '救护车', '动物', '蚂蚁', '羚羊',

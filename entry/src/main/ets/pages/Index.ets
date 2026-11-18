@@ -23,6 +23,10 @@ struct Index {
   @State private vibrationEnabled: boolean = true
   @State private voiceHintEnabled: boolean = true
 
+  private letterboxOffsetX: number = 0;
+  private letterboxOffsetY: number = 0;
+  private letterboxWidth: number = 640;
+  private letterboxHeight: number = 640;
   private isAppInBackground: boolean = false;
   private isRecognitionPageActive: boolean = false;
   private bgCallback: (() => void) | null = null;
@@ -77,59 +81,97 @@ struct Index {
     return 'C';
   }
 
- onObjectDetected(objects: DetectedObject[]): void {
-  // 注意：这里去掉了 objects.length === 0 的 return，为了让空帧也能清理状态
+
+  private getSpeechKey(obj: DetectedObject): string {
+    const id = obj.label === '不明障碍物' ? 9999 : obj.labelId;
+    return `${id}_${this.getObjectZone(obj)}`;
+  }
+
+  private restoreLetterboxBoxes(objects: DetectedObject[]): DetectedObject[] {
+    const restored: DetectedObject[] = [];
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
+      const x1 = obj.box.left * 640;
+      const y1 = obj.box.top * 640;
+      const x2 = (obj.box.left + obj.box.width) * 640;
+      const y2 = (obj.box.top + obj.box.height) * 640;
+
+      const left = (x1 - this.letterboxOffsetX) / this.letterboxWidth;
+      const top = (y1 - this.letterboxOffsetY) / this.letterboxHeight;
+      const right = (x2 - this.letterboxOffsetX) / this.letterboxWidth;
+      const bottom = (y2 - this.letterboxOffsetY) / this.letterboxHeight;
+
+      const clippedLeft = Math.max(0, Math.min(1, left));
+      const clippedTop = Math.max(0, Math.min(1, top));
+      const clippedRight = Math.max(0, Math.min(1, right));
+      const clippedBottom = Math.max(0, Math.min(1, bottom));
+
+      const width = clippedRight - clippedLeft;
+      const height = clippedBottom - clippedTop;
+
+      if (width <= 0 || height <= 0) continue;
+
+      restored.push({
+        label: obj.label,
+        labelId: obj.labelId,
+        score: obj.score,
+        speechText: obj.speechText,
+        queuedAt: obj.queuedAt,
+        box: { left: clippedLeft, top: clippedTop, width: width, height: height }
+      });
+    }
+    return restored;
+  }
+
+onObjectDetected(modelObjects: DetectedObject[]): void {
+  // 1. 先进行坐标还原
+  const objects = this.restoreLetterboxBoxes(modelObjects);
+
   const now = Date.now();
-
-  const ignoreLabels = ['冰箱', '电视', '微波炉', '烤箱', '床', '马桶', '水槽'];
-
-  // 核心高危白名单
   const allowedLabels = [
     '人', '男人', '女人', '男孩', '女孩',
     '汽车', '自行车', '摩托车', '公交车', '卡车', '出租车', '厢式货车', '救护车', '车辆', '陆地交通工具',
-    '椅子', '沙发', '餐桌', '门', '楼梯', '停车标志', '交通标志', '交通信号灯', '红绿灯', '长椅'
+    '椅子', '沙发', '餐桌', '门', '楼梯', '停车标志', '交通标志', '交通信号灯', '红绿灯', '长椅',
+    '盒子', '瓶子', '背包', '行李和包', '桌子', '凳子', '垃圾桶', '花盆', '手提箱', '玩具', '工具', '梯子', '架子', '柜子'
   ];
 
   const validObjects: DetectedObject[] = [];
 
   for (let i = 0; i < objects.length; i++) {
     const obj = objects[i];
-    if (ignoreLabels.includes(obj.label)) continue;
+
+    // 基础数据校验
+    if (!Number.isFinite(obj.score) || obj.box.width <= 0 || obj.box.height <= 0) continue;
 
     const area = obj.box.width * obj.box.height;
-    const aspectRatio = obj.box.width / obj.box.height;
     const centerX = obj.box.left + obj.box.width / 2;
     const centerY = obj.box.top + obj.box.height / 2;
 
-    // 1. 一级：高置信度白名单（≥0.45）
-    if (allowedLabels.includes(obj.label) && obj.score >= 0.45 && area >= 0.01) {
+    // 一级：已知且置信度较高
+    if (allowedLabels.includes(obj.label) && obj.score >= 0.25 && area >= 0.005) {
       validObjects.push(obj);
       continue;
     }
 
-    // 2. 二级：中置信度白名单（0.25～0.45），暂时放行交由后续处理（或者你也可以让它们走兜底逻辑）
-    if (allowedLabels.includes(obj.label) && obj.score >= 0.25 && area >= 0.01) {
-      validObjects.push(obj);
-      continue;
-    }
+    // 二级：兜底（只要大于 0.03 分且面积大于 1.5%，不管它是什么，只要在中间就报）
+    const inCenter = centerX > 0.10 && centerX < 0.90;
+    const inFront = centerY > 0.20;
+    const largeEnough = area >= 0.015;
+    const enoughConfidence = obj.score >= 0.03;
 
-    // 3. 三级：低置信度/非白名单的兜底（必须满足：面积大且位置在画面中下方）
-    const inCenter = centerX > 0.2 && centerX < 0.8;
-    const inLowerArea = centerY > 0.35;
-
-    if (obj.score >= 0.10 && area >= 0.08 && inCenter && inLowerArea) {
-      // 在保证原始分数和 labelId 不变的情况下，仅仅把名字改掉用于播报
+    if (enoughConfidence && largeEnough && inCenter && inFront) {
       obj.label = '不明障碍物';
       validObjects.push(obj);
+      console.info(`[兜底命中] 原类别=${obj.label}, score=${obj.score.toFixed(3)}, area=${area.toFixed(4)}`);
     }
   }
 
   if (validObjects.length === 0) {
-    // 即使没东西，也要更新历史状态让旧目标过期
     this.processQueue();
     return;
   }
 
+  // 冲撞检测逻辑（保留原有，但过滤掉了不明障碍物）
   let hasDanger = false;
   let dangerSpeech = '';
 
@@ -137,7 +179,6 @@ struct Index {
     const obj = validObjects[i];
     const currentArea = obj.box.width * obj.box.height;
     const centerX = obj.box.left + obj.box.width / 2;
-
     const posX = centerX < 0.33 ? 'L' : (centerX > 0.67 ? 'R' : 'C');
     const trackKey = `${obj.label}_${posX}`;
 
@@ -157,7 +198,6 @@ struct Index {
     const isAreaGrowingFast = (growthRate > 0.3 && currentArea > 0.08);
     let currentDangerCount = 0;
 
-    // 冲撞报警只针对高危目标，且绝不对“不明障碍物”报警，防止乱停步
     const isDangerousTarget = ['人', '汽车', '自行车', '摩托车', '公交车', '卡车'].includes(obj.label);
 
     if (isAreaGrowingFast && isDangerousTarget) {
@@ -186,19 +226,15 @@ struct Index {
     return;
   }
 
-  // 队列入队逻辑（保留了原有的方位去重）
+  // 入队逻辑
   for (let i = 0; i < validObjects.length; i++) {
     const obj = validObjects[i];
-    const zone = this.getObjectZone(obj);
-    // 重要：如果是不明障碍物，因为 labelId 没变，为了防重复，我们统一使用 '9999' 作为去重依据
-    const keyId = obj.label === '不明障碍物' ? 9999 : obj.labelId;
-    const key = `${keyId}_${zone}`;
+    const key = this.getSpeechKey(obj); // 统一调用
 
     let inQueue = false;
     for (let j = 0; j < this.speakQueue.length; j++) {
       const qObj = this.speakQueue[j];
-      const qKeyId = qObj.label === '不明障碍物' ? 9999 : qObj.labelId;
-      if (qKeyId === keyId && this.getObjectZone(qObj) === zone) {
+      if (this.getSpeechKey(qObj) === key) { // 统一比较
         inQueue = true;
         break;
       }
@@ -207,8 +243,16 @@ struct Index {
     const lastSpoken = this.spokenHistory.get(key) || 0;
 
     if (!inQueue && (now - lastSpoken > 8000)) {
-      const pos = zone === 'L' ? '左前方' : (zone === 'R' ? '右前方' : '正前方');
-      obj.speechText = `${pos}有${obj.label}`;
+      // 【修复日志问题】先保存原类别再改名
+      if (obj.label !== '不明障碍物') {
+        const pos = this.getObjectZone(obj) === 'L' ? '左前方' : (this.getObjectZone(obj) === 'R' ? '右前方' : '正前方');
+        obj.speechText = `${pos}有${obj.label}`;
+      } else {
+        // 如果是兜底逻辑刚刚改过名字的，日志直接打印兜底来源
+        const pos = this.getObjectZone(obj) === 'L' ? '左前方' : (this.getObjectZone(obj) === 'R' ? '右前方' : '正前方');
+        obj.speechText = `${pos}有不明障碍物`;
+      }
+
       obj.queuedAt = now;
       this.speakQueue.push(obj);
     }
@@ -239,7 +283,7 @@ struct Index {
     this.isSpeaking = true;
     const obj = this.speakQueue.shift()!;
 
-    const key = `${obj.labelId}_${this.getObjectZone(obj)}`;
+    const key = this.getSpeechKey(obj);
     this.spokenHistory.set(key, Date.now());
 
     SpeechManager.getInstance().speak(obj.speechText!, this.getTtsSpeed());
@@ -504,17 +548,22 @@ struct Index {
       // 1. 获取 JPEG 数据
       const component = await img.getComponent(image.ComponentType.JPEG);
       if (!component || !component.byteBuffer) {
-        console.error('[YOLO] 获取 JPEG 数据失败，跳过此帧');
+        console.error('[YOLO] 获取 JPEG 数据为空，跳过此帧');
         return;
       }
 
-      // 2. 创建 ImageSource（这里去掉带 options 的骚操作，用最稳的默认解码）
+      // 【新增】防御性校验：如果数据太短（比如小于 1KB），大概率是没传完整的废帧，直接丢
+      if (component.byteBuffer.byteLength === 0) {
+        console.warn(`[YOLO] JPEG 数据过短 (${component.byteBuffer.byteLength} bytes)，判定为无效帧，跳过`);
+        return;
+      }
+
+      // 2. 创建 ImageSource
       imageSource = image.createImageSource(component.byteBuffer);
       if (!imageSource) {
         console.error('[YOLO] ImageSource 创建失败');
         return;
       }
-
       // 3. 解码成 PixelMap
       pixelMap = await imageSource.createPixelMap();
       if (!pixelMap) {
@@ -601,8 +650,15 @@ struct Index {
     const scaledRgba = new Uint8Array(scaledBuffer);
 
     // 计算贴图偏移量（居中）
+    // 找到这一句
     const offsetX = Math.floor((SIZE - newWidth) / 2);
     const offsetY = Math.floor((SIZE - newHeight) / 2);
+
+    // 【新增】保存这些参数，供后面还原坐标使用
+    this.letterboxOffsetX = offsetX;
+    this.letterboxOffsetY = offsetY;
+    this.letterboxWidth = newWidth;
+    this.letterboxHeight = newHeight;
 
     // 把新图拷进 NCHW 数组
     for (let y = 0; y < newHeight; y++) {
