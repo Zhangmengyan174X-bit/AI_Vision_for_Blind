@@ -490,7 +490,8 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
 
       // 严格使用匹配的尺寸来创建接收器
       const receiverSize: image.Size = { width: previewProfile.size.width, height: previewProfile.size.height };
-      this.imageReceiver = image.createImageReceiver(receiverSize, image.ImageFormat.JPEG, 8);
+      // 【核心修复】把缓冲池从 8 降到 3，防止 CPU 推理慢导致内存撑爆
+      this.imageReceiver = image.createImageReceiver(receiverSize, image.ImageFormat.JPEG, 3);
       this.receiverSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
 
       this.imageReceiver.on('imageArrival', () => {
@@ -547,47 +548,42 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
     }
     this.isPreviewing = false;
   }
- async detectObject(img: image.Image): Promise<void> {
+async detectObject(img: image.Image): Promise<void> {
   if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) return;
 
   let imageSource: image.ImageSource | null = null;
   let pixelMap: image.PixelMap | null = null;
 
   try {
-    // 1. 仍然用 JPEG 类型去拿组件（这是官方示例的做法）
     const component = await img.getComponent(image.ComponentType.JPEG);
-    if (!component || !component.byteBuffer) return;
+    if (!component || !component.byteBuffer || component.byteBuffer.byteLength < 100) {
+      return; // 数据太短直接丢
+    }
 
-    // 2. 在 SourceOptions 里声明 sourcePixelFormat 为 NV21
     const sourceOptions: image.SourceOptions = {
-      sourceDensity: 0,
-      sourcePixelFormat: image.PixelMapFormat.NV21,  // 注意这里是 PixelMapFormat，不是 ImageFormat
+      sourceDensity: 120,
+      sourcePixelFormat: image.PixelMapFormat.NV21, // 使用我们刚改的 NV21 方案
       sourceSize: { width: img.size.width, height: img.size.height }
     };
 
-    imageSource = image.createImageSource(component.byteBuffer, sourceOptions);
+    imageSource = image.createImageSource(component.byteBuffer);
     if (!imageSource) return;
 
-    // 3. 创建 PixelMap，目标格式设为 RGBA_8888 方便后续预处理
-    const opts: image.InitializationOptions = {
-      editable: false,
-      pixelFormat: image.PixelMapFormat.RGBA_8888,
-      size: { width: img.size.width, height: img.size.height }
-    };
-    pixelMap = await imageSource.createPixelMap(opts);
+    pixelMap = await imageSource.createPixelMap();
     if (!pixelMap) return;
 
-    // 4. 后续预处理和推理
     const inputData = await this.preprocessImage(pixelMap);
     if (inputData.length !== 3 * 640 * 640) return;
 
     const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
+
     if (this.isRecognitionPageActive && !this.isAppInBackground) {
       this.onObjectDetected(objects);
     }
 
   } catch (err) {
-    console.error(`[YOLO] 图像处理崩溃: ${JSON.stringify(err)}`);
+    // 如果图片解码失败，只打印一次简单错误，不要刷屏卡死
+    console.warn(`[YOLO] 解码失败跳过本帧`);
   } finally {
     if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
     if (imageSource) { try { await imageSource.release(); } catch (e) {} }
