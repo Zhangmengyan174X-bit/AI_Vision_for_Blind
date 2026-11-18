@@ -547,65 +547,52 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
     }
     this.isPreviewing = false;
   }
+ async detectObject(img: image.Image): Promise<void> {
+  if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) return;
 
-  async detectObject(img: image.Image): Promise<void> {
-    if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) {
-      return;
+  let imageSource: image.ImageSource | null = null;
+  let pixelMap: image.PixelMap | null = null;
+
+  try {
+    // 1. 仍然用 JPEG 类型去拿组件（这是官方示例的做法）
+    const component = await img.getComponent(image.ComponentType.JPEG);
+    if (!component || !component.byteBuffer) return;
+
+    // 2. 在 SourceOptions 里声明 sourcePixelFormat 为 NV21
+    const sourceOptions: image.SourceOptions = {
+      sourceDensity: 0,
+      sourcePixelFormat: image.PixelMapFormat.NV21,  // 注意这里是 PixelMapFormat，不是 ImageFormat
+      sourceSize: { width: img.size.width, height: img.size.height }
+    };
+
+    imageSource = image.createImageSource(component.byteBuffer, sourceOptions);
+    if (!imageSource) return;
+
+    // 3. 创建 PixelMap，目标格式设为 RGBA_8888 方便后续预处理
+    const opts: image.InitializationOptions = {
+      editable: false,
+      pixelFormat: image.PixelMapFormat.RGBA_8888,
+      size: { width: img.size.width, height: img.size.height }
+    };
+    pixelMap = await imageSource.createPixelMap(opts);
+    if (!pixelMap) return;
+
+    // 4. 后续预处理和推理
+    const inputData = await this.preprocessImage(pixelMap);
+    if (inputData.length !== 3 * 640 * 640) return;
+
+    const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
+    if (this.isRecognitionPageActive && !this.isAppInBackground) {
+      this.onObjectDetected(objects);
     }
 
-    let imageSource: image.ImageSource | null = null;
-    let pixelMap: image.PixelMap | null = null;
-
-    try {
-      const component = await img.getComponent(image.ComponentType.JPEG);
-      if (!component || !component.byteBuffer) return;
-
-      const buffer = component.byteBuffer;
-
-      // 【新增日志】检查 JPEG 的头和尾，确认数据是不是半截的
-      if (buffer.byteLength > 0) {
-        const bytes = new Uint8Array(buffer);
-        const len = bytes.length;
-        const header = `${bytes[0].toString(16)} ${bytes[1].toString(16)}`;
-        console.info(`[YOLO] JPEG长度=${len}, 头=${header}`);
-        if (len < 10) {
-          console.warn('[YOLO] 数据太短，直接丢弃');
-          return;
-        }
-      }
-
-      // 【核心修复1】复制一份 buffer，防止异步解码时被相机底层覆盖
-      const jpegData = buffer.slice(0);
-      imageSource = image.createImageSource(jpegData);
-      if (!imageSource) return;
-
-      // 【核心修复2】解码时直接指定 640x640，减轻 CPU 缩放压力
-      const decodingOptions: image.DecodingOptions = {
-        desiredSize: { width: 640, height: 640 },
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-        editable: true
-      };
-
-      pixelMap = await imageSource.createPixelMap(decodingOptions);
-      if (!pixelMap) return;
-
-      const inputData = await this.preprocessImage(pixelMap);
-      if (inputData.length !== 3 * 640 * 640) return;
-
-      const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
-
-      if (this.isRecognitionPageActive && !this.isAppInBackground) {
-        this.onObjectDetected(objects);
-      }
-
-    } catch (err) {
-      // 打印最真实的崩溃原因
-      console.error(`[YOLO] 图像处理崩溃: ${JSON.stringify(err)}`);
-    } finally {
-      if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
-      if (imageSource) { try { await imageSource.release(); } catch (e) {} }
-    }
+  } catch (err) {
+    console.error(`[YOLO] 图像处理崩溃: ${JSON.stringify(err)}`);
+  } finally {
+    if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
+    if (imageSource) { try { await imageSource.release(); } catch (e) {} }
   }
+}
 
   private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
     const SIZE = 640;
