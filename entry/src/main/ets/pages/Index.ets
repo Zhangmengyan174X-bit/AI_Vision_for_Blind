@@ -478,7 +478,9 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
 
       this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, this.previewSurfaceId);
       const receiverSize: image.Size = { width: previewProfile.size.width, height: previewProfile.size.height };
-      this.imageReceiver = image.createImageReceiver(receiverSize, image.ImageFormat.JPEG, 8);
+      // 【核心修复】强制 ImageReceiver 输出 640x640 的小图，大幅降低数据量和解码压力
+      const smallSize: image.Size = { width: 640, height: 640 };
+      this.imageReceiver = image.createImageReceiver(smallSize, image.ImageFormat.JPEG, 8);
       this.receiverSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
 
       this.imageReceiver.on('imageArrival', () => {
