@@ -453,76 +453,76 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
   }
 
   async initCamera(): Promise<void> {
-    if (!this.isRecognitionPageActive || this.isAppInBackground || this.isPreviewing || this.isCameraInitializing) {
-      return;
-    }
-    if (!this.previewSurfaceId) return;
+  if (!this.isRecognitionPageActive || this.isAppInBackground || this.isPreviewing || this.isCameraInitializing) {
+    return;
+  }
+  if (!this.previewSurfaceId) return;
 
-    this.isCameraInitializing = true;
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      this.cameraManager = camera.getCameraManager(context);
-      const cameras = this.cameraManager.getSupportedCameras();
-      const backCamera = cameras.find(cam => cam.cameraPosition === camera.CameraPosition.CAMERA_POSITION_BACK) || cameras[0];
-      if (!backCamera) return;
+  this.isCameraInitializing = true;
+  try {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.cameraManager = camera.getCameraManager(context);
+    const cameras = this.cameraManager.getSupportedCameras();
+    const backCamera = cameras.find(cam => cam.cameraPosition === camera.CameraPosition.CAMERA_POSITION_BACK) || cameras[0];
+    if (!backCamera) return;
 
-      this.cameraInput = this.cameraManager.createCameraInput(backCamera);
-      await this.cameraInput.open();
+    this.cameraInput = this.cameraManager.createCameraInput(backCamera);
+    await this.cameraInput.open();
 
-      const outputCapability = this.cameraManager.getSupportedOutputCapability(backCamera, camera.SceneMode.NORMAL_PHOTO);
+    const outputCapability = this.cameraManager.getSupportedOutputCapability(backCamera, camera.SceneMode.NORMAL_PHOTO);
 
-      // 【核心修复】寻找最接近 640x480 或 1280x720 的尺寸，而不是找最大的！
-      let previewProfile = outputCapability.previewProfiles[0];
-      let minDiff = Math.abs(previewProfile.size.width - 1280) + Math.abs(previewProfile.size.height - 720);
-
-      for (let i = 1; i < outputCapability.previewProfiles.length; i++) {
-        const p = outputCapability.previewProfiles[i];
-        const diff = Math.abs(p.size.width - 1280) + Math.abs(p.size.height - 720);
-        if (diff < minDiff) {
-          minDiff = diff;
-          previewProfile = p;
-        }
+    // 【核心修复 1】优先寻找 720p 的尺寸，不要用 2304 这种超大图，减轻 CPU 和缓冲区压力
+    let previewProfile = outputCapability.previewProfiles[0];
+    let targetSize: image.Size = { width: 1280, height: 720 };
+    for (let i = 0; i < outputCapability.previewProfiles.length; i++) {
+      const p = outputCapability.previewProfiles[i];
+      // 找最接近 720p 的
+      if (Math.abs(p.size.width * p.size.height - targetSize.width * targetSize.height) <
+        Math.abs(previewProfile.size.width * previewProfile.size.height - targetSize.width * targetSize.height)) {
+        previewProfile = p;
       }
+    }
 
-      console.info(`[Camera] 最终选定的尺寸: ${previewProfile.size.width}x${previewProfile.size.height}`);
+    this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, this.previewSurfaceId);
+    const receiverSize: image.Size = { width: previewProfile.size.width, height: previewProfile.size.height };
 
-      this.previewOutput = this.cameraManager.createPreviewOutput(previewProfile, this.previewSurfaceId);
+    // 【核心修复 2】缓冲区容量从 8 改成 2，加快淘汰旧帧的速度
+    this.imageReceiver = image.createImageReceiver(receiverSize, image.ImageFormat.JPEG, 2);
+    this.receiverSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
 
-      // 严格使用匹配的尺寸来创建接收器
-      const receiverSize: image.Size = { width: previewProfile.size.width, height: previewProfile.size.height };
-      // 【核心修复】把缓冲池从 8 降到 3，防止 CPU 推理慢导致内存撑爆
-      this.imageReceiver = image.createImageReceiver(receiverSize, image.ImageFormat.JPEG, 3);
-      this.receiverSurfaceId = await this.imageReceiver.getReceivingSurfaceId();
-
-      this.imageReceiver.on('imageArrival', () => {
-        this.imageReceiver?.readNextImage((err: BusinessError, nextImage: image.Image) => {
-          if (err || !nextImage) return;
-          const now = Date.now();
-          if (now - this.lastDetectTime < this.detectInterval || this.isDetecting) {
-            nextImage.release(); return;
-          }
-          this.lastDetectTime = now;
-          this.isDetecting = true;
-          this.detectObject(nextImage).finally(() => { this.isDetecting = false; nextImage.release(); });
+    this.imageReceiver.on('imageArrival', () => {
+      this.imageReceiver?.readNextImage((err: BusinessError, nextImage: image.Image) => {
+        if (err || !nextImage) return;
+        const now = Date.now();
+        // 只要还没到 800ms，或者正在识别，直接把这张图片扔掉（释放资源），不排队
+        if (now - this.lastDetectTime < this.detectInterval || this.isDetecting) {
+          nextImage.release(); return;
+        }
+        this.lastDetectTime = now;
+        this.isDetecting = true;
+        this.detectObject(nextImage).finally(() => {
+          this.isDetecting = false;
+          nextImage.release();
         });
       });
+    });
 
-      this.receiverOutput = this.cameraManager.createPreviewOutput(previewProfile, this.receiverSurfaceId);
-      this.captureSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.Session;
-      this.captureSession.beginConfig();
-      this.captureSession.addInput(this.cameraInput);
-      this.captureSession.addOutput(this.previewOutput);
-      this.captureSession.addOutput(this.receiverOutput);
-      await this.captureSession.commitConfig();
-      await this.captureSession.start();
-      this.isPreviewing = true;
-    } catch (err) {
-      console.error(`[Camera] 初始化失败: ${JSON.stringify(err)}`);
-      await this.releaseCamera();
-    } finally {
-      this.isCameraInitializing = false;
-    }
+    this.receiverOutput = this.cameraManager.createPreviewOutput(previewProfile, this.receiverSurfaceId);
+    this.captureSession = this.cameraManager.createSession(camera.SceneMode.NORMAL_PHOTO) as camera.Session;
+    this.captureSession.beginConfig();
+    this.captureSession.addInput(this.cameraInput);
+    this.captureSession.addOutput(this.previewOutput);
+    this.captureSession.addOutput(this.receiverOutput);
+    await this.captureSession.commitConfig();
+    await this.captureSession.start();
+    this.isPreviewing = true;
+  } catch (err) {
+    console.error(`[Camera] 初始化失败: ${JSON.stringify(err)}`);
+    await this.releaseCamera();
+  } finally {
+    this.isCameraInitializing = false;
   }
+}
 
   async releaseCamera(): Promise<void> {
     if (this.imageReceiver) {
@@ -548,47 +548,39 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
     }
     this.isPreviewing = false;
   }
-async detectObject(img: image.Image): Promise<void> {
-  if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) return;
-
-  let imageSource: image.ImageSource | null = null;
-  let pixelMap: image.PixelMap | null = null;
-
-  try {
-    const component = await img.getComponent(image.ComponentType.JPEG);
-    if (!component || !component.byteBuffer || component.byteBuffer.byteLength < 100) {
-      return; // 数据太短直接丢
+  async detectObject(img: image.Image): Promise<void> {
+    if (!this.isRecognitionPageActive || this.isAppInBackground || !this.isModelReady || this.yoloDetector === null) {
+      return;
     }
 
-    const sourceOptions: image.SourceOptions = {
-      sourceDensity: 120,
-      sourcePixelFormat: image.PixelMapFormat.NV21, // 使用我们刚改的 NV21 方案
-      sourceSize: { width: img.size.width, height: img.size.height }
-    };
+    let pixelMap: image.PixelMap | null = null;
 
-    imageSource = image.createImageSource(component.byteBuffer);
-    if (!imageSource) return;
+    try {
+      const component = await img.getComponent(image.ComponentType.JPEG);
+      if (!component || !component.byteBuffer) return;
 
-    pixelMap = await imageSource.createPixelMap();
-    if (!pixelMap) return;
+      // 直接用最底层的 API 解码，不强制指定 RGBA（在预处理里我们再转）
+      const imageSource = image.createImageSource(component.byteBuffer);
+      if (!imageSource) return;
 
-    const inputData = await this.preprocessImage(pixelMap);
-    if (inputData.length !== 3 * 640 * 640) return;
+      pixelMap = await imageSource.createPixelMap();
+      if (!pixelMap) return;
 
-    const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
+      const inputData = await this.preprocessImage(pixelMap);
+      if (inputData.length !== 3 * 640 * 640) return;
 
-    if (this.isRecognitionPageActive && !this.isAppInBackground) {
-      this.onObjectDetected(objects);
+      const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
+
+      if (this.isRecognitionPageActive && !this.isAppInBackground) {
+        this.onObjectDetected(objects);
+      }
+
+    } catch (err) {
+      console.error(`[YOLO] 图像处理崩溃: ${JSON.stringify(err)}`);
+    } finally {
+      if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
     }
-
-  } catch (err) {
-    // 如果图片解码失败，只打印一次简单错误，不要刷屏卡死
-    console.warn(`[YOLO] 解码失败跳过本帧`);
-  } finally {
-    if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
-    if (imageSource) { try { await imageSource.release(); } catch (e) {} }
   }
-}
 
   private async preprocessImage(pixelMap: image.PixelMap): Promise<Float32Array> {
     const SIZE = 640;
