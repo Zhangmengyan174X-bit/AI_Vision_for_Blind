@@ -541,58 +541,60 @@ onObjectDetected(modelObjects: DetectedObject[]): void {
       return;
     }
 
-    let imageSource: image.ImageSource | null = null;
     let pixelMap: image.PixelMap | null = null;
 
     try {
-      // 1. 获取 JPEG 数据
+      // 1. 获取 JPEG 数据（这是相机流给的标准接口）
       const component = await img.getComponent(image.ComponentType.JPEG);
       if (!component || !component.byteBuffer) {
-        console.error('[YOLO] 获取 JPEG 数据为空，跳过此帧');
+        console.warn('[YOLO] 获取 JPEG 数据为空，跳过');
         return;
       }
 
-      // 【新增】防御性校验：如果数据太短（比如小于 1KB），大概率是没传完整的废帧，直接丢
-      if (component.byteBuffer.byteLength === 0) {
-        console.warn(`[YOLO] JPEG 数据过短 (${component.byteBuffer.byteLength} bytes)，判定为无效帧，跳过`);
-        return;
-      }
+      // 2. 【关键修复】直接使用 nextImage 的尺寸和官方推荐的 SourceOptions
+      const sourceOptions: image.SourceOptions = {
+        sourceDensity: 120,
+        sourcePixelFormat: image.PixelMapFormat.RGBA_8888, // 强制 RGBA
+        sourceSize: { width: img.size.width, height: img.size.height }
+      };
 
-      // 2. 创建 ImageSource
-      imageSource = image.createImageSource(component.byteBuffer);
+      // 3. 用官方推荐的方式创建 ImageSource
+      const imageSource = image.createImageSource(component.byteBuffer, sourceOptions);
       if (!imageSource) {
         console.error('[YOLO] ImageSource 创建失败');
         return;
       }
-      // 3. 解码成 PixelMap
-      pixelMap = await imageSource.createPixelMap();
+
+      // 4. 解码（这里如果数据真的坏了，会抛异常，被下面的 catch 接住）
+      pixelMap = await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+        editable: true
+      });
+
       if (!pixelMap) {
         console.error('[YOLO] PixelMap 创建失败');
         return;
       }
 
-      // 4. 预处理并推理
+      // 5. 预处理并推理
       const inputData = await this.preprocessImage(pixelMap);
-
-      // 如果预处理失败，返回的是全 0 数组，我们这里稍微加个判断
       if (inputData.length !== 3 * 640 * 640) {
-        console.error('[YOLO] 预处理长度错误，跳过此帧');
+        console.error('[YOLO] 预处理长度错误');
         return;
       }
 
       const objects: DetectedObject[] = await this.yoloDetector.detect(inputData);
 
-      // 【修复】即使 objects 为空（空帧），也要传给逻辑处理，让旧目标消失
+      // 6. 传给业务逻辑（注意：这里我们不再用 objects.length > 0 拦截，让空帧也能进去清理状态）
       if (this.isRecognitionPageActive && !this.isAppInBackground) {
         this.onObjectDetected(objects);
       }
 
     } catch (err) {
-      // 【终极修复】把错误完整打印出来，再也不会是 undefined 了
-      console.error(`[YOLO] 真实崩溃原因: ${JSON.stringify(err)}`);
+      // 捕获解码异常，打印详细原因
+      console.error(`[YOLO] 图像处理崩溃: ${JSON.stringify(err)}`);
     } finally {
       if (pixelMap) { try { await pixelMap.release(); } catch (e) {} }
-      if (imageSource) { try { await imageSource.release(); } catch (e) {} }
     }
   }
 
